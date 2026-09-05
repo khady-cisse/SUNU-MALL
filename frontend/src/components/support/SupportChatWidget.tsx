@@ -55,7 +55,7 @@ export function SupportChatWidget() {
   }
 
   return (
-    <div className="fixed bottom-5 right-5 z-40 flex flex-col items-end gap-3">
+    <div id="support-chat" className="fixed bottom-5 right-5 z-40 flex flex-col items-end gap-3">
       {open && (
         <div className="flex h-[28rem] w-80 flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-elevated sm:w-96">
           <div className="flex items-center justify-between bg-gradient-orange px-4 py-3 text-white">

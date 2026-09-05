@@ -11,7 +11,7 @@ const FOOTER_COLUMNS: [string, { label: string; to?: string }[]][] = [
       { label: "Promotions" },
     ],
   ],
-  ["Support", [{ label: "FAQ" }, { label: "Contact" }, { label: "Aide livreurs" }]],
+  ["Support", [{ label: "FAQ" }, { label: "Contact", to: "/contact" }, { label: "Aide livreurs" }]],
   [
     "Vendeurs",
     [{ label: "Créer boutique", to: "/register-merchant" }, { label: "Abonnements" }, { label: "Guide vendeur" }],

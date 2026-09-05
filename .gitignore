@@ -8,6 +8,7 @@ infra/env/
 infra/volumes/
 docs/Mot de passe*.txt
 backend/celerybeat-schedule
+backend/config/settings/sqlite_test.py
 
 # ===== Python / Django (backend) =====
 __pycache__/
@@ -21,7 +22,7 @@ htmlcov/
 venv/
 .venv/
 
-# ===== Node / JS / TS (frontend, seller-dashboard, mobile) =====
+# ===== Node / JS / TS (frontend, mobile) =====
 node_modules/
 .next/
 dist/

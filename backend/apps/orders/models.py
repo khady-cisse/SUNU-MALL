@@ -2,10 +2,15 @@
 Commandes et livraison.
 """
 import uuid
+from decimal import Decimal
+
 from django.db import models
 from django.utils import timezone
-from apps.users.models import User
+
 from apps.catalog.models import ProductVariant, Store
+from apps.users.models import User
+
+from .geoutils import compute_eta_seconds, haversine_km, point_in_polygon
 
 
 class DeliveryZone(models.Model):
@@ -15,8 +20,51 @@ class DeliveryZone(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def contains(self, lat, lng):
-        # Simplified check, should use proper GeoJSON library
-        return True
+        """Vrai si le point (lat, lng) est dans la frontière de la zone.
+
+        `boundary_geojson` suit la convention GeoJSON simplifiée utilisée
+        dans le reste du projet : `{"type": "Polygon", "coordinates": [[[lng, lat], ...]]}`
+        (ou une liste "crue" de [lat, lng]). Impossible -> False (la zone
+        n'a pas encore de frontière définie par l'admin).
+        """
+        if lat is None or lng is None:
+            return False
+        lat, lng = float(lat), float(lng)
+        polygon = self._extract_polygon()
+        if not polygon:
+            return False
+        return point_in_polygon(lat, lng, polygon)
+
+    def _extract_polygon(self):
+        """Normalise la frontière en une liste de [lat, lng].
+
+        On accepte un FeatureCollection/Feature/Polygon GeoJSON ou une liste
+        crue de points. Les coordonnées GeoJSON standard sont [lng, lat] ;
+        on les inverse pour `point_in_polygon([lat, lng])`.
+        """
+        raw = self.boundary_geojson or {}
+        if isinstance(raw, dict):
+            geometry_type = raw.get("type")
+            if geometry_type == "Polygon":
+                coords = raw.get("coordinates")
+            elif geometry_type == "Feature":
+                coords = (raw.get("geometry") or {}).get("coordinates")
+            elif geometry_type == "FeatureCollection":
+                features = raw.get("features") or []
+                coords = ((features[0].get("geometry") or {}) if features else {}).get("coordinates")
+            else:
+                return None
+        elif isinstance(raw, list):
+            coords = raw
+        else:
+            return None
+
+        if not coords or not isinstance(coords[0], list):
+            return None
+        # Polygone GeoJSON : coords = [[ [lng, lat], ... ]] -> on prend l'anneau extérieur.
+        ring = coords[0] if isinstance(coords[0][0], list) else coords
+        polygon = [[point[1], point[0]] for point in ring if len(point) >= 2]
+        return polygon or None
 
     def __str__(self):
         return self.name
@@ -40,8 +88,25 @@ class Driver(models.Model):
         return self.availability_status == self.AvailabilityStatus.AVAILABLE
 
     def current_position(self):
-        # Should get last known position from DeliveryTracking
-        return None
+        """Dernière position GPS connue du livreur (toutes courses confondues).
+
+        Le client la reçoit via `DeliverySerializer.last_position` ; cette
+        méthode sert au calcul d'ETA (`Delivery.eta_seconds`).
+        """
+        last_tracking = (
+            DeliveryTracking.objects.filter(delivery__driver_id=self.id)
+            .order_by("-recorded_at")
+            .first()
+        )
+        return (
+            {
+                "latitude": last_tracking.latitude,
+                "longitude": last_tracking.longitude,
+                "recorded_at": last_tracking.recorded_at,
+            }
+            if last_tracking
+            else None
+        )
 
     def __str__(self):
         return f"Driver {self.user.get_full_name()}"
@@ -122,11 +187,71 @@ class Delivery(models.Model):
         self.delivered_at = timezone.now()
         self.save()
 
+    def eta_seconds(self):
+        """Temps de trajet estimé (livreur -> adresse du client), en secondes.
+
+        Aucune coordonnée de départ ou d'arrivée -> None (le frontend
+        n'affiche alors pas d'ETA plutôt qu'une valeur farfelue).
+        """
+        if self.status in (self.Status.DELIVERED, self.Status.CANCELLED):
+            return 0
+        driver_position = self.driver.current_position() if self.driver else None
+        if not driver_position or not self.order.address_id:
+            return None
+        address = self.order.address
+        if address.latitude is None or address.longitude is None:
+            return None
+        return compute_eta_seconds(
+            driver_position["latitude"],
+            driver_position["longitude"],
+            address.latitude,
+            address.longitude,
+        )
+
+    def event_payload(self, **extra):
+        """État courant de la livraison, format diffusé sur le canal temps réel.
+
+        C'est le contrat partagé entre les événements poussés (positions,
+        statuts) et l'instantané de connexion SSE : le frontend applique
+        chaque événement directement à son écran sans requête supplémentaire.
+        """
+        last_tracking = self.trackings.first()
+        payload = {
+            "status": self.status,
+            "picked_up_at": self.picked_up_at.isoformat() if self.picked_up_at else None,
+            "delivered_at": self.delivered_at.isoformat() if self.delivered_at else None,
+            "eta_seconds": self.eta_seconds(),
+            "last_position": (
+                {
+                    "latitude": str(last_tracking.latitude),
+                    "longitude": str(last_tracking.longitude),
+                    "recorded_at": last_tracking.recorded_at.isoformat(),
+                }
+                if last_tracking
+                else None
+            ),
+            "message": "",
+        }
+        payload.update(extra)
+        return payload
+
+    def broadcast_status(self, message=""):
+        """Diffuse le changement de statut en temps réel sur le canal livraison.
+
+        Chaque transition du CDC (récupérée, en route, livrée, annulée) arrive
+        ainsi instantanément à l'écran du client, en plus de l'email existant.
+        """
+        from .realtime import publish_delivery_event
+
+        self.refresh_from_db(fields=["driver", "status", "picked_up_at", "delivered_at"])
+        publish_delivery_event(self.id, "status", self.event_payload(message=message))
+
     def cancel(self):
         """Annule la course (appelé quand le client annule sa commande) et prévient le livreur s'il en avait déjà un."""
         had_driver = self.driver_id is not None
         self.status = self.Status.CANCELLED
         self.save(update_fields=["status"])
+        self.broadcast_status("La livraison de votre commande a été annulée.")
         if had_driver:
             self._notify_driver_cancelled()
 
@@ -164,8 +289,26 @@ class DeliveryTracking(models.Model):
         ordering = ['-recorded_at']
 
     def broadcast(self):
-        # Implement websocket/broadcast logic here
-        pass
+        """Publie la nouvelle position sur le canal temps réel de la livraison.
+
+        Appelé après l'enregistrement d'un point GPS (voir `DeliveryViewSet.track`) :
+        le client a déjà `.delivery` et `.driver_detail` à l'écran, il ne lui
+        manque que la position à jour — d'où uniquement la géolocalisation
+        ici, pas tout le payload de la livraison.
+        """
+        from .realtime import publish_delivery_event
+
+        publish_delivery_event(
+            self.delivery_id,
+            "position",
+            self.delivery.event_payload(
+                last_position={
+                    "latitude": str(self.latitude),
+                    "longitude": str(self.longitude),
+                    "recorded_at": self.recorded_at.isoformat(),
+                }
+            ),
+        )
 
     def __str__(self):
         return f"Tracking {self.delivery.id} at {self.recorded_at}"
@@ -183,9 +326,9 @@ class Address(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def distance_to(self, lat, lng):
-        # Simplified distance calculation
-        if self.latitude and self.longitude and lat and lng:
-            return ((self.latitude - lat)**2 + (self.longitude - lng)**2)**0.5
+        """Distance à vol d'oiseau (km) vers un autre point, ou None sans coordonnées."""
+        if self.latitude is not None and self.longitude is not None and lat is not None and lng is not None:
+            return haversine_km(self.latitude, self.longitude, lat, lng)
         return None
 
     def __str__(self):

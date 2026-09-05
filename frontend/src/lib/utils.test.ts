@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cn, formatPrice, formatDate } from "./utils";
+import { cn, formatPrice, formatDate, formatEta } from "./utils";
 
 describe("cn", () => {
   it("merges class names and drops falsy values", () => {
@@ -33,5 +33,23 @@ describe("formatDate", () => {
   it("produces a non-empty, human-readable string", () => {
     const result = formatDate("2026-07-19T10:30:00Z");
     expect(result.length).toBeGreaterThan(0);
+  });
+});
+
+describe("formatEta", () => {
+  it("returns null when the ETA is missing", () => {
+    expect(formatEta(null)).toBeNull();
+    expect(formatEta(undefined)).toBeNull();
+  });
+
+  it("announces an imminent arrival for zero or negative", () => {
+    expect(formatEta(0)).toBe("Arrivée imminente");
+    expect(formatEta(-5)).toBe("Arrivée imminente");
+  });
+
+  it("rounds up to whole minutes", () => {
+    expect(formatEta(30)).toBe("~1 min");
+    expect(formatEta(120)).toBe("~2 min");
+    expect(formatEta(749)).toBe("~13 min");
   });
 });

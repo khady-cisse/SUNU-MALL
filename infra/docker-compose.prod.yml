@@ -12,7 +12,9 @@ services:
       dockerfile: Dockerfile
       args:
         REQUIREMENTS_FILE: requirements/base.txt
-    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4
+    # --threads 4 : nécessaire au flux SSE de suivi GPS. Sans threads, un
+    # worker gunicorn sync resterait bloqué sur chaque connexion ouverte.
+    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 4 --threads 4
     volumes:
       - ./volumes/media:/app/media
       - ./logs/backend:/app/logs
@@ -60,23 +62,13 @@ services:
     networks: [sunu-mall]
     restart: unless-stopped
 
-  # ---------- Frontend boutique (Next.js) ----------
+  # ---------- Frontend (boutique + espaces vendeur/admin/livreur) ----------
   frontend:
     build:
       context: ../frontend
       dockerfile: Dockerfile
-    environment:
-      NEXT_PUBLIC_API_URL: https://votre-domaine.com/api
-    depends_on:
-      - backend
-    networks: [sunu-mall]
-    restart: unless-stopped
-
-  # ---------- Dashboard vendeur ----------
-  seller-dashboard:
-    build:
-      context: ../seller-dashboard
-      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: https://${PUBLIC_DOMAIN:-votre-domaine.com}/api
     depends_on:
       - backend
     networks: [sunu-mall]
@@ -153,7 +145,6 @@ services:
     depends_on:
       - backend
       - frontend
-      - seller-dashboard
     networks: [sunu-mall]
     restart: unless-stopped
 

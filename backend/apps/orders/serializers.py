@@ -39,15 +39,16 @@ class DeliveryTrackingSerializer(serializers.ModelSerializer):
 class DeliverySerializer(serializers.ModelSerializer):
     driver_detail = DriverSerializer(source="driver", read_only=True)
     last_position = serializers.SerializerMethodField()
+    eta_seconds = serializers.SerializerMethodField()
 
     class Meta:
         model = Delivery
         fields = [
             "id", "order", "driver", "driver_detail", "status",
-            "picked_up_at", "delivered_at", "last_position",
+            "picked_up_at", "delivered_at", "last_position", "eta_seconds",
             "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "order", "created_at", "updated_at", "last_position"]
+        read_only_fields = ["id", "order", "created_at", "updated_at", "last_position", "eta_seconds"]
 
     def get_last_position(self, obj):
         tracking = obj.trackings.first()
@@ -58,6 +59,9 @@ class DeliverySerializer(serializers.ModelSerializer):
             "longitude": tracking.longitude,
             "recorded_at": tracking.recorded_at,
         }
+
+    def get_eta_seconds(self, obj):
+        return obj.eta_seconds()
 
 
 class OrderItemSerializer(serializers.ModelSerializer):

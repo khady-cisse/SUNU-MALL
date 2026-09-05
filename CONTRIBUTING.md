@@ -27,7 +27,7 @@ chore(infra): met à jour l'image Postgres
 ```
 
 Types courants : `feat`, `fix`, `chore`, `docs`, `refactor`, `test`.
-Zones courantes : `backend`, `frontend`, `seller-dashboard`, `mobile`, `ia`, `infra`.
+Zones courantes : `backend`, `frontend`, `mobile`, `ia`, `infra`.
 
 ## Pull Requests
 

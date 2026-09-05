@@ -6,6 +6,8 @@ import { useAuthStore } from "@/store/authStore";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api";
 
+export { API_BASE_URL };
+
 export class ApiError extends Error {
   status: number;
   data: unknown;

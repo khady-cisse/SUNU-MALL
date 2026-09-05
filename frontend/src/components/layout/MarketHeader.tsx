@@ -14,6 +14,7 @@ const NAV_LINKS = [
   { label: "Catégories", to: "/category" },
   { label: "Boutiques", to: "/boutiques" },
   { label: "Promotions", to: "/search" },
+  { label: "Contact", to: "/contact" },
 ];
 
 const ROLE_LABEL: Record<string, string> = {

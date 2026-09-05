@@ -19,3 +19,11 @@ export function formatDate(value: string) {
     timeStyle: "short",
   }).format(new Date(value));
 }
+
+/** Temps de trajet estimé (SSE/API) en libellé lisible, ex. « ~8 min ». */
+export function formatEta(seconds: number | null | undefined) {
+  if (seconds == null) return null;
+  if (seconds <= 0) return "Arrivée imminente";
+  const minutes = Math.max(1, Math.ceil(seconds / 60));
+  return `~${minutes} min`;
+}

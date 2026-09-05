@@ -1,5 +1,6 @@
-import { apiGet, apiPatch, apiPost } from "@/lib/api";
-import type { Address, CheckoutPayload, Delivery, DeliveryStatus, Driver, DriverAvailability, Order, Paginated } from "@/types";
+import { API_BASE_URL, apiGet, apiPatch, apiPost } from "@/lib/api";
+import { useAuthStore } from "@/store/authStore";
+import type { Address, CheckoutPayload, Delivery, DeliveryEvent, DeliveryStatus, Driver, DriverAvailability, Order, Paginated } from "@/types";
 
 export async function listAddresses() {
   const data = await apiGet<Paginated<Address>>("/orders/addresses/");
@@ -81,4 +82,26 @@ export function updateDeliveryStatus(deliveryId: string, status: DeliveryStatus)
 
 export function shareDeliveryPosition(deliveryId: string, latitude: number, longitude: number) {
   return apiPost(`/orders/deliveries/${deliveryId}/track/`, { latitude, longitude });
+}
+
+/**
+ * Abonne la page au flux temps réel (SSE) d'une livraison : positions GPS et
+ * changements de statut arrivent en push, sans polling.
+ *
+ * Le `<EventSource>` navigateur ne pouvant pas poser d'en-tête `Authorization`,
+ * on passe le JWT en query string (le backend l'accepte via `?access_token=`).
+ * Appeler `source.close()` dans l'effet pour fermer proprement le flux.
+ */
+export function subscribeDeliveryEvents(deliveryId: string, onEvent: (event: DeliveryEvent) => void) {
+  const token = useAuthStore.getState().accessToken;
+  const query = token ? `?access_token=${encodeURIComponent(token)}` : "";
+  const source = new EventSource(`${API_BASE_URL}/orders/deliveries/${deliveryId}/events/${query}`);
+  source.onmessage = (message) => {
+    try {
+      onEvent(JSON.parse(message.data) as DeliveryEvent);
+    } catch {
+      // Chunk de contrôle (heartbeat `: keep-alive` ou malformé) : ignoré.
+    }
+  };
+  return source;
 }

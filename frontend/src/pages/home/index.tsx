@@ -2,7 +2,6 @@ import { Link } from "react-router-dom";
 import {
   ArrowRight,
   Bike,
-  Check,
   ChevronRight,
   Headphones,
   Shield,
@@ -14,7 +13,6 @@ import {
 } from "lucide-react";
 import { useAsync } from "@/hooks/useAsync";
 import * as catalogApi from "@/api/catalog";
-import * as monetizationApi from "@/api/monetization";
 import * as iaApi from "@/api/ia";
 import { ProductCard } from "@/components/marketplace/ProductCard";
 import { ProductRail } from "@/components/marketplace/ProductRail";
@@ -25,7 +23,6 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useRecentlyViewedStore } from "@/store/recentlyViewedStore";
 import { useAuthStore } from "@/store/authStore";
-import { formatPrice } from "@/lib/utils";
 import type { Product } from "@/types";
 
 const WHY_ITEMS = [
@@ -40,7 +37,6 @@ const SPACES = [
   { icon: ShoppingBag, title: "Client", desc: "Panier multi-boutiques, paiement Wave/OM/CB, suivi GPS.", path: "/home", bg: "bg-orange/10", ic: "text-orange" },
   { icon: Store, title: "Commerçant", desc: "Gestion catalogue, livreurs affiliés, analytics.", path: "/register-merchant", bg: "bg-blue-50", ic: "text-blue-600" },
   { icon: Bike, title: "Livreur", desc: "Courses assignées, itinéraire, preuve de livraison.", path: "/driver-login", bg: "bg-green-50", ic: "text-green-600" },
-  { icon: Shield, title: "Administrateur", desc: "Validation boutiques, commissions, modération.", path: "/login", bg: "bg-purple-50", ic: "text-purple-600" },
 ];
 
 export default function HomePage() {
@@ -51,7 +47,6 @@ export default function HomePage() {
     refetch: refetchProducts,
   } = useAsync(() => catalogApi.listProducts(), []);
   const { data: categories, loading: loadingCategories } = useAsync(() => catalogApi.listCategories(), []);
-  const { data: plans, loading: loadingPlans } = useAsync(() => monetizationApi.listSubscriptionPlans(), []);
   const { data: sponsoredProducts, loading: loadingSponsored } = useAsync(() => catalogApi.listSponsoredProducts(), []);
   const { data: bestSellers, loading: loadingBestSellers } = useAsync(() => catalogApi.listBestSellers(), []);
 
@@ -79,9 +74,6 @@ export default function HomePage() {
       .map((r) => r.value);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recentlyViewedIds.join(",")]);
-
-  const sortedPlans = [...(plans ?? [])].sort((a, b) => parseFloat(a.price) - parseFloat(b.price));
-  const featuredPlanId = sortedPlans[1]?.id;
 
   return (
     <div className="bg-gray-50">
@@ -253,7 +245,7 @@ export default function HomePage() {
           <span className="text-xs font-bold uppercase tracking-widest text-orange">Pour tout le monde</span>
           <h2 className="mt-2 font-display text-2xl font-bold text-gray-800">Un espace pour chacun</h2>
         </div>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="mx-auto grid max-w-5xl gap-4 md:grid-cols-3">
           {SPACES.map((r) => (
             <Link
               key={r.title}
@@ -272,72 +264,6 @@ export default function HomePage() {
           ))}
         </div>
       </section>
-
-      {/* ─── ABONNEMENTS ─── */}
-      {(loadingPlans || (plans && plans.length > 0)) && (
-        <section className="border-y border-gray-100 bg-white py-10">
-          <div className="mx-auto max-w-7xl px-4">
-            <div className="mb-8 text-center">
-              <span className="text-xs font-bold uppercase tracking-widest text-orange">Monétisation</span>
-              <h2 className="mt-2 font-display text-2xl font-bold text-gray-800">Un abonnement adapté à chaque boutique</h2>
-            </div>
-            {loadingPlans ? (
-              <div className="mx-auto grid max-w-4xl gap-5 md:grid-cols-3">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <Skeleton key={i} className="h-72 w-full rounded-2xl" />
-                ))}
-              </div>
-            ) : (
-              <div className="mx-auto grid max-w-4xl gap-5 md:grid-cols-3">
-                {sortedPlans.map((plan) => {
-                  const featured = plan.id === featuredPlanId;
-                  const features = Array.isArray(plan.features) ? (plan.features as string[]) : [];
-                  return (
-                    <div
-                      key={plan.id}
-                      className={`relative rounded-2xl border p-6 transition-all ${
-                        featured
-                          ? "scale-[1.02] border-navy bg-navy text-white shadow-xl"
-                          : "border-gray-100 bg-white hover:border-orange/30 hover:shadow-md"
-                      }`}
-                    >
-                      {featured && (
-                        <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-orange px-3 py-1 text-[11px] font-bold text-white shadow">
-                          POPULAIRE
-                        </span>
-                      )}
-                      <p className={`text-xs font-bold uppercase tracking-widest ${featured ? "text-orange-light" : "text-orange"}`}>
-                        {plan.name}
-                      </p>
-                      <p className={`mt-2 font-display text-2xl font-extrabold ${featured ? "text-white" : "text-gray-800"}`}>
-                        {parseFloat(plan.price) === 0 ? "Gratuit" : formatPrice(plan.price)}
-                      </p>
-                      <p className={`mt-1 text-sm ${featured ? "text-white/60" : "text-gray-400"}`}>
-                        Facturation {plan.billing_cycle === "monthly" ? "mensuelle" : plan.billing_cycle}
-                      </p>
-                      <ul className={`mt-4 space-y-2 text-sm ${featured ? "text-white/80" : "text-gray-600"}`}>
-                        {features.map((f) => (
-                          <li key={f} className="flex items-center gap-2">
-                            <Check className="h-4 w-4 shrink-0" /> {f}
-                          </li>
-                        ))}
-                      </ul>
-                      <Link
-                        to="/subscriptions"
-                        className={`mt-5 block rounded-xl py-2.5 text-center text-sm font-bold transition-colors ${
-                          featured ? "btn-orange" : "border border-gray-200 text-gray-700 hover:bg-gray-50"
-                        }`}
-                      >
-                        Voir le détail
-                      </Link>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </section>
-      )}
     </div>
   );
 }

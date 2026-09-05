@@ -13,7 +13,7 @@ Ce dépôt utilise une structure de **mono-repo** regroupant toutes les briques 
 | **CTO (Lead Infra / DevOps & Backend)** | Architecture, déploiement, sécurité, base de données |
 | **Développeur Backend** | API REST (Django DRF), tâches asynchrones (Celery) |
 
-| **Développeuse Frontend** | Boutique publique (Next.js) & Dashboard Vendeur (React) |
+| **Développeuse Frontend** | Boutique publique (React/Vite) & Espaces vendeur / admin (React/Vite) |
 | **Développeuse Mobile & IA** | Application Client (React Native) & Intégration IA |
 | **Développeur Mobile, IA & DevOps** | App mobile, intégration IA et support infrastructure / CI-CD |
 
@@ -24,8 +24,7 @@ Ce dépôt utilise une structure de **mono-repo** regroupant toutes les briques 
 ```
 sunu-mall/
 ├── backend/            # API REST - Django + Django REST Framework + Celery
-├── frontend/           # Boutique publique - Next.js (Rendu côté serveur pour le SEO)
-├── seller-dashboard/   # Dashboard vendeur - React + Vite (Application SPA statique)
+├── frontend/           # Boutique publique + espaces vendeur/admin/livreur - React + Vite (SPA)
 ├── mobile/             # Application mobile Client - React Native (Expo)
 ├── infra/              # Configuration Docker Compose, Nginx, Variables d'env & Monitoring
 │   ├── env/            # Variables d'environnement templates (dev, prod, staging)
@@ -57,7 +56,6 @@ cp infra/env/redis.env.example infra/env/redis.env
 # Configuration locale des projets (si vous les lancez hors Docker)
 cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env.local
-cp seller-dashboard/.env.example seller-dashboard/.env.local
 ```
 
 ### 3. Lancement de la Stack de Développement
@@ -78,13 +76,12 @@ docker compose -f infra/docker-compose.dev.yml logs -f backend
 Une fois la stack démarrée, les services suivants sont accessibles :
 
 ### 🚀 Points d'entrée Utilisateurs & API
-* **Boutique en ligne (Next.js) :** [http://localhost:3010](http://localhost:3010)
-* **Tableau de bord Vendeur (React) :** [http://localhost:3011](http://localhost:3011)
+* **Boutique en ligne (React/Vite) :** [http://localhost:3010](http://localhost:3010)
+* **Espace vendeur :** [http://localhost:3010/merchant](http://localhost:3010/merchant)
 * **API Backend Django (DRF) :** [http://localhost:8080/api/](http://localhost:8080/api/)
 * **Administration Django :** [http://localhost:8080/admin/](http://localhost:8080/admin/)
 * **Nginx Reverse Proxy (Global) :** [http://localhost:8081](http://localhost:8081)
   * `/` -> Redirige vers le Frontend
-  * `/seller/` -> Redirige vers le Dashboard Vendeur
   * `/api/` -> Redirige vers le Backend (API)
   * `/admin/` -> Redirige vers l'Administration Django
 

@@ -1,13 +1,19 @@
 from decimal import Decimal
+import json
+import time
+
+from django.contrib.auth import get_user_model
 from django.db import models, transaction
+from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied, ValidationError
 from rest_framework.response import Response
 from .models import Address, Delivery, DeliveryTracking, Driver, Order, OrderItem
 from .pricing import compute_delivery_fee
+from .realtime import subscribe_delivery_events
 from .serializers import (
     AddressSerializer, CheckoutSerializer, DeliveryQuoteSerializer, DeliverySerializer,
     DeliveryTrackingSerializer, DriverSerializer, OrderSerializer,
@@ -212,6 +218,9 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
             raise PermissionDenied("Vous ne pouvez affecter un livreur qu'à vos propres commandes.")
         driver = get_object_or_404(Driver, pk=request.data.get("driver"))
         delivery.assign_driver(driver)
+        delivery.broadcast_status(
+            f"Votre commande est prise en charge par {driver.user.get_full_name() or driver.user.email}."
+        )
         return Response(DeliverySerializer(delivery).data)
 
     @action(detail=True, methods=["post"], url_path="status")
@@ -243,6 +252,13 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
         if new_status == Delivery.Status.DELIVERED:
             delivery.order.change_status(Order.Status.DELIVERED)
 
+        status_messages = {
+            Delivery.Status.ASSIGNED: "Un livreur vous est affecté.",
+            Delivery.Status.PICKED_UP: "Le livreur a récupéré votre colis : en route !",
+            Delivery.Status.DELIVERED: "Votre commande est livrée. Bonne réception !",
+        }
+        delivery.broadcast_status(status_messages.get(delivery.status, ""))
+
         return Response(DeliverySerializer(delivery).data)
 
     @action(detail=True, methods=["post"], url_path="track")
@@ -256,5 +272,97 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
 
         serializer = DeliveryTrackingSerializer(data={**request.data, "delivery": delivery.id})
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        tracking = serializer.save()
+        tracking.broadcast()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class DeliveryEventStreamView(viewsets.ViewSet):
+    """
+    Flux Server-Sent Events d'une livraison (SSE, HTTP long-message).
+
+    GET /api/orders/deliveries/{id}/events/?access_token=<jwt>
+
+    Le client, le commerçant concerné, le livreur affecté ou l'admin reçoivent
+    en direct les positions GPS et les changements de statut poussés sur le
+    canal Redis (`apps.orders.realtime`). Le `<EventSource>` navigateur ne peut
+    pas poser d'en-tête `Authorization`, d'où le token en query string — le
+    Bearer header reste accepté pour les autres clients.
+
+    Dégradations assumées :
+    - sans Redis, le flux renvoie l'instantané puis des keep-alives (le
+      frontend garde son polling de secours de 10 s) ;
+    - un événement publié avant la connexion n'est pas ré-expédié (le flux est
+      un journal « from now on », pas un historique).
+    """
+    permission_classes = [permissions.AllowAny]  # auth gérée manuellement ci-dessous
+
+    def _authenticate(self, request):
+        if request.user.is_authenticated:
+            return request.user
+        access = request.query_params.get("access_token") or request.query_params.get("token")
+        if access:
+            User = get_user_model()
+            from rest_framework_simplejwt.exceptions import TokenError
+            from rest_framework_simplejwt.tokens import AccessToken
+            try:
+                payload = AccessToken(access)
+                request.user = User.objects.get(pk=payload["user_id"])
+                return request.user
+            except (TokenError, User.DoesNotExist, KeyError):
+                raise AuthenticationFailed("Le jeton du flux est invalide ou expiré.")
+        raise AuthenticationFailed("Authentification requise pour suivre cette livraison.")
+
+    def _delivery_for(self, user, delivery_id):
+        delivery = get_object_or_404(Delivery, pk=delivery_id)
+        is_allowed = (
+            delivery.order.customer_id == user.id
+            or delivery.order.store.owner_id == user.id
+            or (delivery.driver_id and delivery.driver.user_id == user.id)
+            or user.has_role(Role.RoleName.ADMIN)
+        )
+        if not is_allowed:
+            raise PermissionDenied("Vous n'êtes pas autorisé à suivre cette livraison.")
+        return delivery
+
+    def _sse(self, event, payload):
+        data = json.dumps({"event": event, **payload}, default=str)
+        return f"data: {data}\n\n"
+
+    def _event_stream(self, delivery, pubsub):
+        # 1. Instantané de connexion : l'écran se positionne tout de suite
+        #    sans attendre l'événement suivant.
+        yield self._sse("snapshot", delivery.event_payload())
+        if pubsub is None:
+            while True:  # Redis coupé : keep-alives, le client bascule en polling.
+                yield ": keep-alive\n\n"
+                time.sleep(15)
+        try:
+            while True:
+                message = pubsub.get_message(ignore_subscribe_messages=True, timeout=15)
+                if message is None:
+                    yield ": keep-alive\n\n"
+                    continue
+                raw = message.get("data")
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8")
+                try:
+                    parsed = json.loads(raw)
+                    event = parsed.pop("event", "event")
+                    yield self._sse(event, parsed)
+                except (TypeError, ValueError):
+                    yield f"data: {raw}\n\n"
+        finally:
+            pubsub.close()
+
+    def get(self, request, pk=None):
+        user = self._authenticate(request)
+        delivery = self._delivery_for(user, pk)
+        _, pubsub = subscribe_delivery_events(pk)
+        response = StreamingHttpResponse(
+            self._event_stream(delivery, pubsub),
+            content_type="text/event-stream",
+        )
+        response["Cache-Control"] = "no-cache"
+        response["X-Accel-Buffering"] = "no"
+        return response

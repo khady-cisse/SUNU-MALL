@@ -9,8 +9,8 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { formatDate } from "@/lib/utils";
-import type { DeliveryStatus } from "@/types";
+import { formatDate, formatEta } from "@/lib/utils";
+import type { DeliveryEvent, DeliveryStatus } from "@/types";
 
 const PAYMENT_STATUS_VARIANT: Record<string, "default" | "success" | "warning" | "danger"> = {
   success: "success",
@@ -35,19 +35,46 @@ export default function TrackingPage() {
     () => (orderId ? ordersApi.getOrder(orderId) : Promise.resolve(null)),
     [orderId],
   );
+
+  // État "live" porté par le flux SSE ; tant qu'il est null, on affiche les
+  // données REST. Chaque événement transporte l'état complet de la livraison.
+  const [live, setLive] = useState<DeliveryEvent | null>(null);
+  const [sseConnected, setSseConnected] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [retrying, setRetrying] = useState(false);
 
+  const deliveryId = order?.delivery?.id ?? null;
+
   useEffect(() => {
-    if (!orderId) return;
+    if (!deliveryId) return;
+    const source = ordersApi.subscribeDeliveryEvents(deliveryId, (event) => {
+      setSseConnected(true);
+      setLive(event);
+      // Un changement de statut modifie l'ordre entier (paiement, refund…) :
+      // on resynchronise via l'API plutôt que d'assembler l'objet à la main.
+      if (event.event === "status" || event.event === "assigned") refetch();
+    });
+    source.onopen = () => setSseConnected(true);
+    source.onerror = () => setSseConnected(false);
+    return () => source.close();
+  }, [deliveryId, refetch]);
+
+  // Polling de secours : uniquement quand le flux SSE est coupé/absent.
+  useEffect(() => {
+    if (!orderId || sseConnected) return;
     const interval = setInterval(refetch, 10000);
     return () => clearInterval(interval);
-  }, [orderId, refetch]);
+  }, [orderId, refetch, sseConnected]);
 
   if (!orderId) return <EmptyState icon={PackageSearch} title="Aucune commande sélectionnée" />;
   if (!order) return <Spinner label="Chargement du suivi…" />;
 
-  const currentIndex = Math.max(0, STEPS.findIndex((s) => s.key === order.delivery?.status));
+  const deliveryStatus = live?.status ?? order.delivery?.status;
+  const lastPosition = live?.last_position ?? order.delivery?.last_position ?? null;
+  const deliveryEta = live?.eta_seconds ?? order.delivery?.eta_seconds ?? null;
+  const liveMessage = live?.message ?? "";
+
+  const currentIndex = Math.max(0, STEPS.findIndex((s) => s.key === deliveryStatus));
 
   async function handleCancel() {
     if (!order || !confirm("Annuler cette commande ?")) return;
@@ -79,13 +106,24 @@ export default function TrackingPage() {
           <p className="text-sm text-muted-foreground">
             Commande n°{order.id.slice(0, 8)} — <strong className="text-ink">{order.store_name}</strong>
           </p>
-          {order.can_be_cancelled && (
-            <Button variant="danger" size="sm" onClick={handleCancel} loading={cancelling}>
-              <XCircle className="h-4 w-4" />
-              Annuler la commande
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {!sseConnected && (
+              <Badge variant="warning">Mode secours (actualisation 10 s)</Badge>
+            )}
+            {order.can_be_cancelled && (
+              <Button variant="danger" size="sm" onClick={handleCancel} loading={cancelling}>
+                <XCircle className="h-4 w-4" />
+                Annuler la commande
+              </Button>
+            )}
+          </div>
         </div>
+
+        {liveMessage && (
+          <div className="rounded-lg border border-orange/30 bg-orange-50 p-3 text-xs font-medium text-orange-800">
+            {liveMessage}
+          </div>
+        )}
 
         {order.payment?.status === "failed" && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-danger/30 bg-red-50 p-3">
@@ -138,15 +176,15 @@ export default function TrackingPage() {
             </div>
           </div>
         )}
-        {(order.delivery?.last_position || (order.address_detail?.latitude != null && order.address_detail?.longitude != null)) && (
+        {(lastPosition || (order.address_detail?.latitude != null && order.address_detail?.longitude != null)) && (
           <div className="border-t border-border pt-4">
             <Suspense fallback={<div className="h-56 w-full animate-pulse rounded-2xl bg-muted" />}>
               <DeliveryMap
                 driverPosition={
-                  order.delivery?.last_position
+                  lastPosition
                     ? {
-                        lat: parseFloat(order.delivery.last_position.latitude),
-                        lng: parseFloat(order.delivery.last_position.longitude),
+                        lat: parseFloat(lastPosition.latitude),
+                        lng: parseFloat(lastPosition.longitude),
                         label: "Position du livreur",
                       }
                     : null
@@ -163,12 +201,20 @@ export default function TrackingPage() {
                 className="h-56 w-full"
               />
             </Suspense>
-            {order.delivery?.last_position && (
-              <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-                <MapPin className="h-3.5 w-3.5 text-orange" />
-                Position mise à jour {formatDate(order.delivery.last_position.recorded_at)}
-              </p>
-            )}
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              {lastPosition && (
+                <p className="flex items-center gap-1.5">
+                  <MapPin className="h-3.5 w-3.5 text-orange" />
+                  Position mise à jour {formatDate(lastPosition.recorded_at)}
+                </p>
+              )}
+              {deliveryEta != null && deliveryStatus !== "delivered" && (
+                <p className="flex items-center gap-1.5">
+                  <Clock className="h-3.5 w-3.5 text-orange" />
+                  Arrivée estimée : {formatEta(deliveryEta)}
+                </p>
+              )}
+            </div>
           </div>
         )}
       </Card>

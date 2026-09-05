@@ -1,6 +1,6 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { CheckCircle2, MapPin, Navigation, PackageSearch, Truck } from "lucide-react";
+import { CheckCircle2, MapPin, Navigation, PackageSearch, Satellite, Truck } from "lucide-react";
 import { useAsync } from "@/hooks/useAsync";
 import * as ordersApi from "@/api/orders";
 import { Card } from "@/components/ui/Card";
@@ -27,7 +27,9 @@ export default function DriverDeliveryPage() {
   const deliveryId = searchParams.get("delivery");
   const [updating, setUpdating] = useState(false);
   const [sharingPosition, setSharingPosition] = useState(false);
+  const [autoTracking, setAutoTracking] = useState(false);
   const [positionMessage, setPositionMessage] = useState<string | null>(null);
+  const lastSentAt = useRef(0);
 
   const { data: delivery, loading: loadingDelivery, refetch } = useAsync(
     () => (deliveryId ? ordersApi.getDelivery(deliveryId) : Promise.resolve(null)),
@@ -37,6 +39,40 @@ export default function DriverDeliveryPage() {
     () => (delivery ? ordersApi.getOrder(delivery.order) : Promise.resolve(null)),
     [delivery?.order],
   );
+
+  // Suivi automatique : watchPosition envoie la position au serveur au fil de
+  // l'eau (~1 requête / 4 s), diffusée ensuite en temps réel au client (SSE).
+  useEffect(() => {
+    if (!autoTracking || !deliveryId) return;
+    if (!("geolocation" in navigator)) {
+      setPositionMessage("Localisation non prise en charge par ce navigateur.");
+      setAutoTracking(false);
+      return;
+    }
+    let cancelled = false;
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const now = Date.now();
+        if (cancelled || now - lastSentAt.current < 4000) return;
+        lastSentAt.current = now;
+        ordersApi
+          .shareDeliveryPosition(deliveryId, pos.coords.latitude, pos.coords.longitude)
+          .then(() => setPositionMessage("Position transmise en continu au client."))
+          .catch(() => setPositionMessage("Échec d'envoi de la position (nouvel essai…)."));
+      },
+      () => {
+        if (!cancelled) {
+          setPositionMessage("Localisation refusée ou indisponible — suivi automatique arrêté.");
+          setAutoTracking(false);
+        }
+      },
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
+    );
+    return () => {
+      cancelled = true;
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, [autoTracking, deliveryId]);
 
   if (!deliveryId) return <EmptyState icon={PackageSearch} title="Sélectionnez une course" description="Choisissez une course depuis « Mes courses »." />;
   if (loadingDelivery || (delivery && loadingOrder)) return <Spinner label="Chargement de la course…" />;
@@ -138,10 +174,25 @@ export default function DriverDeliveryPage() {
         )}
 
         {(delivery.status === "assigned" || delivery.status === "picked_up") && (
-          <Button variant="secondary" onClick={sharePosition} loading={sharingPosition}>
-            <Navigation className="h-4 w-4" />
-            Partager ma position
-          </Button>
+          <>
+            <Button variant="secondary" onClick={sharePosition} loading={sharingPosition}>
+              <Navigation className="h-4 w-4" />
+              Partager ma position
+            </Button>
+            <Button variant="secondary" onClick={() => setAutoTracking((active) => !active)} className={autoTracking ? "ring-2 ring-orange" : ""}>
+              <Satellite className="h-4 w-4" />
+              {autoTracking ? "Arrêter le suivi automatique" : "Suivi automatique"}
+            </Button>
+          </>
+        )}
+        {autoTracking && (
+          <div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-xs text-success">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+            </span>
+            Suivi GPS actif — le client voit votre position en temps réel.
+          </div>
         )}
         {positionMessage && (
           <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/60 px-3 py-2 text-xs text-muted-foreground">

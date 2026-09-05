@@ -24,6 +24,7 @@ import CategoryDetailPage from "@/pages/category-detail";
 import WishlistPage from "@/pages/wishlist";
 import RecentlyViewedPage from "@/pages/recently-viewed";
 import NotificationsPage from "@/pages/notifications";
+import ContactPage from "@/pages/contact";
 
 import CartPage from "@/pages/cart";
 import CheckoutAddressPage from "@/pages/checkout-address";
@@ -83,6 +84,7 @@ export const router = createBrowserRouter([
       { path: "/wishlist", element: <WishlistPage /> },
       { path: "/recently-viewed", element: <RecentlyViewedPage /> },
       { path: "/notifications", element: <NotificationsPage /> },
+      { path: "/contact", element: <ContactPage /> },
     ],
   },
 

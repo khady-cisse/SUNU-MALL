@@ -178,6 +178,12 @@ export interface Driver {
 
 export type DeliveryStatus = "pending" | "assigned" | "picked_up" | "delivered" | "cancelled";
 
+export interface DeliveryTrackingPoint {
+  latitude: string;
+  longitude: string;
+  recorded_at: string;
+}
+
 export interface Delivery {
   id: string;
   order: string;
@@ -186,9 +192,26 @@ export interface Delivery {
   status: DeliveryStatus;
   picked_up_at: string | null;
   delivered_at: string | null;
-  last_position: { latitude: string; longitude: string; recorded_at: string } | null;
+  last_position: DeliveryTrackingPoint | null;
+  eta_seconds: number | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Événement poussé par le flux SSE de livraison (`/orders/deliveries/{id}/events/`).
+ * `event` vaut "snapshot" (instantané de connexion), "position" (GPS), "status"
+ * ou "assigned". Chaque événement porte l'état complet courant de la livraison.
+ */
+export interface DeliveryEvent {
+  event: "snapshot" | "position" | "status" | "assigned";
+  delivery_id?: string;
+  status: DeliveryStatus;
+  picked_up_at: string | null;
+  delivered_at: string | null;
+  eta_seconds: number | null;
+  last_position: DeliveryTrackingPoint | null;
+  message: string;
 }
 
 export interface OrderItem {

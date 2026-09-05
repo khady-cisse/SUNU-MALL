@@ -3,10 +3,9 @@ Calcul du frais de livraison. Seule source de vérité côté serveur : le
 montant envoyé par le client (`delivery_type`) ne sert qu'à choisir la
 formule, jamais à fixer directement le prix payé.
 """
-import math
 from decimal import Decimal, ROUND_HALF_UP
 
-EARTH_RADIUS_KM = 6371
+from .geoutils import haversine_km
 
 BASE_FEE = Decimal("500")
 PER_KM_RATE = Decimal("150")
@@ -20,14 +19,6 @@ FALLBACK_FEES = {
     "standard": Decimal("1000"),
     "express": Decimal("2000"),
 }
-
-
-def haversine_km(lat1, lng1, lat2, lng2) -> float:
-    lat1, lng1, lat2, lng2 = (math.radians(float(v)) for v in (lat1, lng1, lat2, lng2))
-    dlat = lat2 - lat1
-    dlng = lng2 - lng1
-    a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlng / 2) ** 2
-    return 2 * EARTH_RADIUS_KM * math.asin(math.sqrt(a))
 
 
 def _round_to_nearest_hundred(value: Decimal) -> Decimal:
