@@ -11,6 +11,7 @@ from apps.orders.models import Order
 from apps.payments.models import Payment
 
 
+@override_settings(PAYMENT_SANDBOX=True)
 class PaymentSandboxTests(TestCase):
     def setUp(self):
         self.client = APIClient()

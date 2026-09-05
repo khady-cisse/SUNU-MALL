@@ -26,7 +26,13 @@ TINY_PNG = (
 _TMP_MEDIA_ROOT = tempfile.mkdtemp(prefix="sunu-mall-test-media-")
 
 
-@override_settings(DEFAULT_FILE_STORAGE="django.core.files.storage.FileSystemStorage", MEDIA_ROOT=_TMP_MEDIA_ROOT)
+@override_settings(
+    STORAGES={
+        "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    },
+    MEDIA_ROOT=_TMP_MEDIA_ROOT,
+)
 class CatalogOwnershipTests(TestCase):
     @classmethod
     def tearDownClass(cls):

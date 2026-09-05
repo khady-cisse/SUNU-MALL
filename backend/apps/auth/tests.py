@@ -416,7 +416,8 @@ class AuthTests(TestCase):
 
     def test_resend_verification_email_already_verified(self):
         """
-        Teste le renvoi de l'email pour un utilisateur déjà vérifié.
+        Un compte déjà vérifié reçoit la même réponse générique qu'un email
+        inconnu : on ne révèle pas l'état du compte (anti-énumération).
         """
         user = User.objects.create_user(
             username='testuser',
@@ -429,7 +430,7 @@ class AuthTests(TestCase):
         data = {'email': 'test@example.com'}
         response = self.client.post(self.resend_verification_url, data, format='json')
         
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('message', response.data)
 
     @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')

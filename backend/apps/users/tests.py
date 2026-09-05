@@ -168,21 +168,23 @@ class RBACAPITests(TestCase):
         """Vérifie les accès du rôle merchant aux endpoints protégés."""
         self.client.force_authenticate(user=self.merchant_user)
 
-        self.assertEqual(self.client.get(self.user_list_url).status_code, status.HTTP_200_OK)
+        # La liste des utilisateurs est réservée à l'admin (anti-énumération :
+        # un commerçant ne doit pas pouvoir lister emails/téléphones des autres).
+        self.assertEqual(self.client.get(self.user_list_url).status_code, status.HTTP_403_FORBIDDEN)
         self.assert_admin_only_actions_forbidden(self.merchant_user)
 
     def test_client_access_to_protected_endpoints(self):
         """Vérifie les accès du rôle client aux endpoints protégés."""
         self.client.force_authenticate(user=self.client_user)
 
-        self.assertEqual(self.client.get(self.user_list_url).status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.get(self.user_list_url).status_code, status.HTTP_403_FORBIDDEN)
         self.assert_admin_only_actions_forbidden(self.client_user)
 
     def test_driver_access_to_protected_endpoints(self):
         """Vérifie les accès du rôle driver aux endpoints protégés."""
         self.client.force_authenticate(user=self.driver_user)
 
-        self.assertEqual(self.client.get(self.user_list_url).status_code, status.HTTP_200_OK)
+        self.assertEqual(self.client.get(self.user_list_url).status_code, status.HTTP_403_FORBIDDEN)
         self.assert_admin_only_actions_forbidden(self.driver_user)
 
     def test_unauthenticated_user_cannot_access_protected_endpoints(self):

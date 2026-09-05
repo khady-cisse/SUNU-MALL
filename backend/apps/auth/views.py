@@ -1,5 +1,6 @@
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import update_last_login
+from django.conf import settings
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.response import Response
@@ -22,6 +23,15 @@ from apps.users.models import User
 
 class AuthAnonRateThrottle(AnonRateThrottle):
     rate = "10/min"
+
+    def allow_request(self, request, view):
+        # En dev (AUTH_ANON_THROTTLE_RATE = None dans config/settings/dev.py)
+        # le throttle est inactif : pensé pour la production (protéger
+        # /login, /register, /token... du brute-force). On ne s'appuie PAS sur
+        # settings.DEBUG car Django force DEBUG=False pendant `manage.py test`.
+        if settings.AUTH_ANON_THROTTLE_RATE is None:
+            return True
+        return super().allow_request(request, view)
 
 
 class VerifiedTokenObtainPairSerializer(TokenObtainPairSerializer):

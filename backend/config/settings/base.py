@@ -148,6 +148,13 @@ REST_FRAMEWORK = {
     },
 }
 
+# Throttle anti-brute-force des endpoints d'authentification (register, login,
+# resend de vérification, guest-checkout, obtention de JWT). Rate fixé ici pour
+# la production ; config/settings/dev.py le désactive (None) pour le dev et les
+# tests. On ne s'appuie PAS sur settings.DEBUG car Django force DEBUG=False
+# pendant `manage.py test`.
+AUTH_ANON_THROTTLE_RATE = "10/min"
+
 # DRF Spectacular (Swagger/OpenAPI)
 SPECTACULAR_SETTINGS = {
     "TITLE": "SUNU MALL API",
