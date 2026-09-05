@@ -2,9 +2,16 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from apps.users.models import User, Role, UserRole
 
+ALLOWED_REGISTRATION_ROLES = {'client', 'merchant', 'driver'}
+
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=8)
-    role_name = serializers.CharField(write_only=True, required=False, default='client')
+    role_name = serializers.ChoiceField(
+        choices=[(r, r) for r in sorted(ALLOWED_REGISTRATION_ROLES)],
+        write_only=True,
+        required=False,
+        default='client',
+    )
 
     class Meta:
         model = User
@@ -12,9 +19,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         role_name = validated_data.pop('role_name', 'client')
-        
-        # Le modèle AbstractUser de Django exige un 'username' par défaut.
-        # On peut utiliser l'email comme username pour éviter les erreurs.
+
         username = validated_data['email']
 
         user = User.objects.create_user(
@@ -25,11 +30,10 @@ class RegisterSerializer(serializers.ModelSerializer):
             last_name=validated_data.get('last_name', ''),
             phone=validated_data.get('phone', '')
         )
-        
-        # Attribution du rôle
+
         role, _ = Role.objects.get_or_create(name=role_name)
         UserRole.objects.create(user=user, role=role)
-        
+
         return user
 
 class LoginSerializer(serializers.Serializer):

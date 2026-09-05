@@ -91,7 +91,14 @@ export default function TrackingPage() {
     if (!order?.payment) return;
     setRetrying(true);
     try {
-      await paymentsApi.sandboxConfirmPayment(order.payment.id, "success");
+      // Relance le paiement par le vrai flux (initiate), pas directement le
+      // sandbox : en environnement sandbox `initiate` renvoie aussi un
+      // message de simulation ; en production (PAYMENT_SANDBOX=False) le
+      // bouton ne dépend plus d'un endpoint volontairement inactif.
+      const result = await paymentsApi.initiatePayment(order.payment.id);
+      if (result.sandbox) {
+        await paymentsApi.sandboxConfirmPayment(order.payment.id, "success");
+      }
       refetch();
     } finally {
       setRetrying(false);

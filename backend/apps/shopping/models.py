@@ -48,11 +48,14 @@ class Cart(models.Model):
         return sum(item.subtotal() for item in self.items.all())
 
     def add_item(self, variant, qty=1):
+        inventory = getattr(variant, "inventory", None)
+        if inventory is not None and inventory.available() < qty:
+            raise ValueError(f"Stock insuffisant pour « {variant.product.name} » (disponible : {inventory.available()}).")
         item, created = CartItem.objects.get_or_create(cart=self, product_variant=variant)
-        if not created:
-            item.quantity += qty
-        else:
-            item.quantity = qty
+        new_quantity = (item.quantity + qty) if not created else qty
+        if inventory is not None and inventory.available() < new_quantity:
+            raise ValueError(f"Stock insuffisant pour « {variant.product.name} » (disponible : {inventory.available()}).")
+        item.quantity = new_quantity
         item.save()
 
     def clear(self):

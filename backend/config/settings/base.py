@@ -88,8 +88,25 @@ CELERY_RESULT_BACKEND = REDIS_URL
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 
+# Tâches planifiées (Celery Beat). L'expiration des abonnements et les
+# rappels "expire bientôt" tournaient dans SubscriptionViewSet.get_queryset
+# (des écritures/emails à la simple lecture) ; elles sont ici, quotidiennes.
+CELERY_BEAT_SCHEDULE = {
+    "expire-and-remind-subscriptions-daily": {
+        "task": "apps.monetization.tasks.expire_and_remind_subscriptions",
+        "schedule": 24 * 60 * 60,  # toutes les 24h
+    },
+}
+
 # --- Stockage fichiers (MinIO, compatible API S3) ---
-DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
+STORAGES = {
+    "default": {
+        "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
 AWS_ACCESS_KEY_ID = config("MINIO_ACCESS_KEY", default="minioadmin")
 AWS_SECRET_ACCESS_KEY = config("MINIO_SECRET_KEY", default="minioadmin")
 AWS_STORAGE_BUCKET_NAME = config("MINIO_BUCKET", default="sunu-mall")
@@ -204,9 +221,10 @@ EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
 DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="noreply@sunumall.com")
 
 # --- Paiement (Wave / Orange Money) ---
-# Tant qu'aucune vraie clé marchande n'est fournie, PAYMENT_SANDBOX reste actif
-# et apps.payments.gateways simule le paiement au lieu d'appeler un vrai fournisseur.
-PAYMENT_SANDBOX = config("PAYMENT_SANDBOX", default=True, cast=bool)
+# PAYMENT_SANDBOX doit être explicitement mis à False en production ET en
+# recette avec de vraies clés marchandes. Le défaut est False : un déploiement
+# oublieux ne doit jamais tourner silencieusement en paiements simulés.
+PAYMENT_SANDBOX = config("PAYMENT_SANDBOX", default=False, cast=bool)
 WAVE_API_KEY = config("WAVE_API_KEY", default="")
 ORANGE_MONEY_API_KEY = config("ORANGE_MONEY_API_KEY", default="")
 FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3004")

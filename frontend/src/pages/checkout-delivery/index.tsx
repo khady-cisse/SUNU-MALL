@@ -19,6 +19,7 @@ export default function CheckoutDeliveryPage() {
   const address = useCheckoutStore((s) => s.address);
   const setDelivery = useCheckoutStore((s) => s.setDelivery);
   const [fees, setFees] = useState<Record<string, number> | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!storeId || !address) return;
@@ -27,9 +28,13 @@ export default function CheckoutDeliveryPage() {
       OPTIONS.map((o) =>
         ordersApi.getDeliveryQuote({ store: storeId, address: address.id, delivery_type: o.id }).then((fee) => [o.id, fee] as const),
       ),
-    ).then((entries) => {
-      if (!cancelled) setFees(Object.fromEntries(entries));
-    });
+    )
+      .then((entries) => {
+        if (!cancelled) setFees(Object.fromEntries(entries));
+      })
+      .catch(() => {
+        if (!cancelled) setError("Impossible de calculer les frais de livraison. Veuillez réessayer.");
+      });
     return () => {
       cancelled = true;
     };
@@ -51,7 +56,11 @@ export default function CheckoutDeliveryPage() {
         Livraison à : {address.street}, {address.city}
       </p>
       {!fees ? (
-        <Spinner label="Calcul des frais de livraison…" />
+        error ? (
+          <div className="rounded-2xl border border-danger/30 bg-red-50 p-4 text-sm text-danger">{error}</div>
+        ) : (
+          <Spinner label="Calcul des frais de livraison…" />
+        )
       ) : (
         <div className="flex flex-col gap-3">
           {OPTIONS.map((option) => {

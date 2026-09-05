@@ -152,7 +152,16 @@ class ProductViewSet(viewsets.ModelViewSet):
             ).values_list("product_id", flat=True)
             queryset = queryset.filter(id__in=sponsored_product_ids)
 
-        return queryset
+        # Éviter les N+1 : ProductSerializer sérialise images + variants, et
+        # ProductVariantSerializer lit inventory (get_quantity / is_available).
+        # Prefetch les trois en 2 requêtes au lieu d'1 par produit/variante.
+        return queryset.prefetch_related(
+            "images",
+            models.Prefetch(
+                "variants",
+                queryset=ProductVariant.objects.select_related("inventory"),
+            ),
+        )
 
     def perform_create(self, serializer):
         store = serializer.validated_data.get("store")

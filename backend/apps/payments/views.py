@@ -100,7 +100,7 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
         if outcome == "success":
             payment.mark_succeeded()
             if payment.order_id is not None:
-                payment.order.change_status(Order.Status.PAID)
+                payment.order.change_status(Order.Status.PAID, changed_by=request.user)
                 _send_order_confirmation(payment.order)
                 delivery = getattr(payment.order, "delivery", None)
                 if delivery:

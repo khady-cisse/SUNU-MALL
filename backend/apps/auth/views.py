@@ -3,6 +3,7 @@ from django.contrib.auth.models import update_last_login
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.settings import api_settings
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -17,6 +18,10 @@ from .serializers import (
 )
 from .utils import email_verification_token, send_verification_email
 from apps.users.models import User
+
+
+class AuthAnonRateThrottle(AnonRateThrottle):
+    rate = "10/min"
 
 
 class VerifiedTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -62,6 +67,7 @@ class VerifiedTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 class VerifiedTokenObtainPairView(TokenObtainPairView):
     serializer_class = VerifiedTokenObtainPairSerializer
+    throttle_classes = [AuthAnonRateThrottle]
 
 class RegisterView(generics.CreateAPIView):
     """
@@ -71,6 +77,7 @@ class RegisterView(generics.CreateAPIView):
     """
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [AuthAnonRateThrottle]
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -105,6 +112,7 @@ class LoginView(generics.GenericAPIView):
     """
     serializer_class = LoginSerializer
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [AuthAnonRateThrottle]
 
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -187,6 +195,7 @@ class ResendVerificationEmailView(generics.GenericAPIView):
     """
     serializer_class = ResendVerificationSerializer
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [AuthAnonRateThrottle]
 
     def post(self, request):
         serializer = self.get_serializer(data=request.data)
@@ -202,9 +211,11 @@ class ResendVerificationEmailView(generics.GenericAPIView):
             }, status=status.HTTP_200_OK)
         
         if user.is_verified:
+            # Ne pas révéler l'état du compte : même réponse générique que
+            # pour un email inconnu, pour ne pas faciliter l'énumération.
             return Response({
-                "message": "Votre email a déjà été vérifié."
-            }, status=status.HTTP_400_BAD_REQUEST)
+                "message": "Si cet email est associé à un compte, un email de vérification a été envoyé."
+            }, status=status.HTTP_200_OK)
         
         send_verification_email(user)
         return Response({
@@ -221,6 +232,7 @@ class GuestCheckoutView(generics.GenericAPIView):
     """
     serializer_class = GuestCheckoutSerializer
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [AuthAnonRateThrottle]
 
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)

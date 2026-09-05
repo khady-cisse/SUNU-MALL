@@ -26,13 +26,7 @@ class Report(models.Model):
     class Meta:
         ordering = ['-created_at']
 
-    @staticmethod
-    def generate():
-        # Implement report generation logic here
-        pass
-
     def get_download_url(self):
-        # Implement signed URL logic here
         return self.minio_path
 
     def __str__(self):
@@ -51,11 +45,6 @@ class TrafficStatistic(models.Model):
     class Meta:
         unique_together = ['store', 'date']
         ordering = ['-date']
-
-    @staticmethod
-    def compute_for_store(store, date):
-        # Implement traffic computation logic here
-        pass
 
     def __str__(self):
         return f"Traffic {self.store.name} - {self.date}"

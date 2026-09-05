@@ -5,6 +5,7 @@ import * as usersApi from "@/api/users";
 import type { DailyCount } from "@/api/users";
 import { Card } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
+import { ErrorState } from "@/components/ui/ErrorState";
 import { TrendChart } from "@/components/ui/TrendChart";
 
 function toTrendPoints(daily: DailyCount[]) {
@@ -15,12 +16,13 @@ function toTrendPoints(daily: DailyCount[]) {
 }
 
 export default function AdminDashboardPage() {
-  const { data: stats, loading: loadingStats } = useAsync(() => usersApi.getDashboardStats(), []);
+  const { data: stats, loading: loadingStats, error: statsError, refetch: refetchStats } = useAsync(() => usersApi.getDashboardStats(), []);
 
   const newUsersByDay = useMemo(() => toTrendPoints(stats?.trend.new_users ?? []), [stats]);
   const newStoresByDay = useMemo(() => toTrendPoints(stats?.trend.new_stores ?? []), [stats]);
 
   if (loadingStats) return <Spinner label="Chargement des statistiques…" />;
+  if (statsError) return <ErrorState message="Impossible de charger les statistiques." onRetry={refetchStats} />;
   if (!stats) return null;
 
   return (

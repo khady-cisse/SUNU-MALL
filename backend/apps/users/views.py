@@ -47,14 +47,17 @@ class UserViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        queryset = User.objects.all().order_by("-created_at")
-        role = self.request.query_params.get("role")
-        if role:
-            queryset = queryset.filter(user_roles__role__name=role)
-        return queryset
+        user = self.request.user
+        if user.has_role("admin"):
+            queryset = User.objects.all().order_by("-created_at")
+            role = self.request.query_params.get("role")
+            if role:
+                queryset = queryset.filter(user_roles__role__name=role)
+            return queryset
+        return User.objects.filter(pk=user.pk)
 
     def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+        if self.action in ['list', 'retrieve', 'create', 'update', 'partial_update', 'destroy']:
             permission_classes = [IsAdmin]
         else:
             permission_classes = [permissions.IsAuthenticated]

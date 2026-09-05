@@ -75,7 +75,14 @@ class RecommendationLog(models.Model):
             )
 
         payload = {"recommended_product_ids": [str(pid) for pid in recommended_ids]}
-        return RecommendationLog.objects.create(user=user, payload=payload)
+        log = RecommendationLog.objects.create(user=user, payload=payload)
+
+        # Limite la croissance : ce fichier est écrit à chaque visite de page
+        # d'accueil pour un utilisateur connecté. Conserver uniquement la
+        # dernière entrée par utilisateur (les plus anciennes n'ont pas de
+        # valeur : la recommandation courante est réécrite à chaque calcul).
+        RecommendationLog.objects.filter(user=user).exclude(pk=log.pk).delete()
+        return log
 
     def __str__(self):
         return f"Recommandation pour {self.user.username} — {self.created_at:%Y-%m-%d}"

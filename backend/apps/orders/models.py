@@ -364,7 +364,7 @@ class Order(models.Model):
         self.total_amount = sum(item.subtotal() for item in self.items.all()) + self.delivery_fee
         self.save()
 
-    def change_status(self, new_status):
+    def change_status(self, new_status, changed_by=None):
         old_status = self.status
         self.status = new_status
         self.save()
@@ -372,7 +372,7 @@ class Order(models.Model):
             order=self,
             previous_status=old_status,
             new_status=new_status,
-            changed_by=self.customer
+            changed_by=changed_by or self.customer,
         )
         from apps.analytics.models import SalesStatistic
         SalesStatistic.compute_for_store(self.store, self.created_at.date())

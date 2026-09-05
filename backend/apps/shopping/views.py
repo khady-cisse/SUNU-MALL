@@ -1,10 +1,28 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from .models import Cart, CartItem, Wishlist
 from .serializers import CartSerializer, WishlistSerializer
 from apps.catalog.models import Product, ProductVariant
+
+
+def _parse_quantity(raw, default=1):
+    """
+    Converti une quantité reçue du client en entier positif. Un champ
+    manquant vaut `default` ; toute valeur non numérique ou < 1 lève une
+    ValidationError (400) au lieu d'un crash 500 ou d'une quantité absurde.
+    """
+    if raw is None:
+        return default
+    try:
+        quantity = int(raw)
+    except (TypeError, ValueError):
+        raise ValidationError("La quantité doit être un nombre entier.")
+    if quantity < 1:
+        raise ValidationError("La quantité doit être au moins 1.")
+    return quantity
 
 
 class CartViewSet(viewsets.ViewSet):
@@ -26,8 +44,11 @@ class CartViewSet(viewsets.ViewSet):
     def add_item(self, request):
         cart = self._get_cart(request.user)
         variant = get_object_or_404(ProductVariant, pk=request.data.get("product_variant"))
-        quantity = int(request.data.get("quantity", 1))
-        cart.add_item(variant, qty=quantity)
+        quantity = _parse_quantity(request.data.get("quantity"))
+        try:
+            cart.add_item(variant, qty=quantity)
+        except ValueError as exc:
+            raise ValidationError(str(exc))
         return Response(CartSerializer(cart).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["patch", "delete"], url_path=r"items/(?P<item_id>[^/.]+)")
@@ -39,7 +60,7 @@ class CartViewSet(viewsets.ViewSet):
         else:
             quantity = request.data.get("quantity")
             if quantity is not None:
-                item.quantity = int(quantity)
+                item.quantity = _parse_quantity(quantity)
                 item.save()
         return Response(CartSerializer(cart).data)
 

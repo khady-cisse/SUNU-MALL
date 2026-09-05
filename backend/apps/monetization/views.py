@@ -113,30 +113,10 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
     EXPIRING_SOON_DAYS = 3
 
     def get_queryset(self):
-        # Auto-guérison paresseuse : un abonnement actif dont la date de fin
-        # est dépassée passe à "expired" dès qu'on le relit (avec e-mail),
-        # sans tâche planifiée dédiée (cohérent avec le reste du projet —
-        # voir RecommendationLog/SalesStatistic, calculés à la demande).
-        today = timezone.now().date()
-        for subscription in Subscription.objects.filter(status=Subscription.Status.ACTIVE, ends_at__lt=today):
-            subscription.status = Subscription.Status.EXPIRED
-            subscription.save(update_fields=["status"])
-            subscription.notify_expired()
-
-        # Rappel envoyé une seule fois par abonnement (on vérifie qu'aucune
-        # notification "expire bientôt" n'existe déjà pour lui, plutôt que
-        # d'ajouter un champ dédié rien que pour ce drapeau).
-        soon_cutoff = today + timedelta(days=self.EXPIRING_SOON_DAYS)
-        expiring_soon = Subscription.objects.filter(
-            status=Subscription.Status.ACTIVE, ends_at__gte=today, ends_at__lte=soon_cutoff
-        )
-        for subscription in expiring_soon:
-            already_notified = Notification.objects.filter(
-                metadata__subscription_id=str(subscription.id), subject__icontains="expire bientôt"
-            ).exists()
-            if not already_notified:
-                subscription.notify_expiring_soon((subscription.ends_at - today).days)
-
+        # Note : l'expiration et les rappels sont traités en tâche Celery
+        # périodique (apps.monetization.tasks.expire_and_remind_subscriptions),
+        # plus dans cette lecture — un simple GET ne fait plus d'écriture ni
+        # d'envoi d'email (voir CELERY_BEAT_SCHEDULE dans settings).
         user = self.request.user
         if user.has_role(Role.RoleName.ADMIN):
             return Subscription.objects.all()

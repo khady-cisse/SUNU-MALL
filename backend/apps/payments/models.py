@@ -10,13 +10,6 @@ from apps.orders.models import Order
 from apps.monetization.models import Invoice, Subscription
 
 
-class PaymentService:
-    @staticmethod
-    def process_order_payment(order, amount, method):
-        # Implement payment processing logic here
-        pass
-
-
 class CommissionRule(models.Model):
     id = models.AutoField(primary_key=True)
     applies_to = models.CharField(max_length=100)

@@ -43,11 +43,17 @@ class Notification(models.Model):
     def _send_email(self):
         from django.conf import settings
         from django.core.mail import send_mail
+        import logging
+
+        logger = logging.getLogger(__name__)
 
         try:
             send_mail(self.subject, self.message, settings.DEFAULT_FROM_EMAIL, [self.user.email], fail_silently=False)
             self.mark_sent()
         except Exception:
+            # Un SMTP injoignable ne doit pas être invisible : on trace la
+            # cause exacte (quota, auth, réseau...) avant de marquer l'échec.
+            logger.exception("Échec de l'envoi de la notification email à %s (sujet : %s)", self.user.email, self.subject)
             self.mark_failed()
 
     def _send_sms(self):
@@ -92,10 +98,6 @@ class SponsoredProduct(models.Model):
     def is_active(self):
         today = timezone.now().date()
         return self.status == self.Status.ACTIVE and self.starts_at <= today <= self.ends_at
-
-    def spend_today(self):
-        # Implement today's spend calculation
-        return 0
 
     def __str__(self):
         return f"Sponsored {self.product.name}"

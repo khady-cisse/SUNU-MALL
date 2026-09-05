@@ -95,6 +95,12 @@ class OrderViewSet(viewsets.ModelViewSet):
                     pk=item["product_variant"],
                     product__store=store,
                 )
+                inventory = getattr(variant, "inventory", None)
+                if inventory is not None and not inventory.reserve(item["quantity"]):
+                    raise ValidationError(
+                        f"Stock insuffisant pour « {variant.product.name} » ({variant.sku}). "
+                        f"Disponible : {inventory.available()}."
+                    )
                 order_item = OrderItem.objects.create(
                     order=order,
                     product_variant=variant,
@@ -250,7 +256,7 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
         delivery.save()
 
         if new_status == Delivery.Status.DELIVERED:
-            delivery.order.change_status(Order.Status.DELIVERED)
+            delivery.order.change_status(Order.Status.DELIVERED, changed_by=user)
 
         status_messages = {
             Delivery.Status.ASSIGNED: "Un livreur vous est affecté.",
