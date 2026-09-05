@@ -18,6 +18,7 @@ urlpatterns = [
     path("api/monetization/", include("apps.monetization.urls")),
     path("api/analytics/", include("apps.analytics.urls")),
     path("api/ia/", include("apps.ia.urls")),
+    path("api/kyc/", include("apps.kyc.urls")),
     # Swagger/OpenAPI Documentation
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),

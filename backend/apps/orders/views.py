@@ -22,6 +22,7 @@ from apps.catalog.models import ProductVariant, Store
 from apps.payments.models import Payment, Refund
 from apps.shopping.models import CartItem
 from apps.users.models import Role
+from apps.kyc.utils import driver_kyc_verified
 
 
 class AddressViewSet(viewsets.ModelViewSet):
@@ -191,6 +192,17 @@ class DriverViewSet(viewsets.ReadOnlyModelViewSet):
             if "vehicle_type" in request.data:
                 driver.vehicle_type = request.data["vehicle_type"]
             if "availability_status" in request.data:
+                # Gating KYC (spec §21) : un livreur ne peut se rendre
+                # disponible (donc accepter des courses) que si son identité
+                # (DriverKYC) a été vérifiée.
+                if (
+                    request.data["availability_status"] == Driver.AvailabilityStatus.AVAILABLE
+                    and not driver_kyc_verified(request.user)
+                ):
+                    raise PermissionDenied(
+                        "Votre identité (KYC) doit être vérifiée par un administrateur "
+                        "avant de pouvoir accepter des livraisons."
+                    )
                 driver.availability_status = request.data["availability_status"]
             if "zone" in request.data:
                 driver.zone_id = request.data["zone"]

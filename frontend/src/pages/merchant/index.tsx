@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { KycStatusCard } from "@/components/kyc/KycStatusCard";
 import { formatDate, formatPrice } from "@/lib/utils";
 
 const STATUS_VARIANT: Record<string, "default" | "success" | "warning" | "danger"> = {
@@ -43,22 +44,27 @@ export default function MerchantDashboardPage() {
 
   if (own.length === 0) {
     return (
-      <EmptyState
-        icon={StoreIcon}
-        title="Vous n'avez pas encore de boutique"
-        description="Créez votre boutique pour commencer à publier des produits."
-        action={
-          <Link to="/create-shop">
-            <Button>Créer ma boutique</Button>
-          </Link>
-        }
-      />
+      <div className="flex flex-col gap-6">
+        <KycStatusCard kind="seller" />
+        <EmptyState
+          icon={StoreIcon}
+          title="Vous n'avez pas encore de boutique"
+          description="Créez votre boutique pour commencer à publier des produits."
+          action={
+            <Link to="/create-shop">
+              <Button>Créer ma boutique</Button>
+            </Link>
+          }
+        />
+      </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-2xl text-ink">Tableau de bord</h1>
+
+      <KycStatusCard kind="seller" />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Card className="flex items-center gap-3">

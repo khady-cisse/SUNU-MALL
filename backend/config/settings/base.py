@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     "apps.analytics",
     "apps.ia",
     "apps.auth",
+    "apps.kyc",
 ]
 
 MIDDLEWARE = [
@@ -125,6 +126,18 @@ if _minio_public_endpoint:
     # par défaut pour AWS_S3_CUSTOM_DOMAIN — on inclut donc le bucket dedans.
     AWS_S3_CUSTOM_DOMAIN = f"{_minio_public_endpoint}/{AWS_STORAGE_BUCKET_NAME}"
     AWS_S3_URL_PROTOCOL = "https:" if AWS_S3_USE_SSL else "http:"
+
+# --- Stockage KYC (pièces d'identité, bucket PRIVÉ dédié) ---
+# Les documents KYC sont hébergés dans un bucket privé séparé du bucket public
+# (`sunu-mall-private`). Ils restent inaccessibles en lecture publique et ne
+# sont exposés qu'à travers des URLs pré-signées à courte durée (TLS de 300s),
+# générées par Django après contrôle des permissions. Le backend "fs" (système
+# de fichiers local) est réservé aux tests : la suite s'exécute ainsi sans
+# MinIO. Voir apps/kyc/storage.py.
+KYC_STORAGE_BACKEND = config("KYC_STORAGE_BACKEND", default="s3")
+KYC_STORAGE_BUCKET = config("KYC_STORAGE_BUCKET", default="sunu-mall-private")
+KYC_STORAGE_LOCATION = config("KYC_STORAGE_LOCATION", default=str(BASE_DIR / "media_kyc"))
+KYC_PRESIGNED_URL_TTL = config("KYC_PRESIGNED_URL_TTL", default=300, cast=int)
 
 # DRF
 REST_FRAMEWORK = {

@@ -16,6 +16,7 @@ from .serializers import (
 from apps.users.permissions import IsAdmin, IsStoreOwnerOrAdmin
 from apps.users.models import Role
 from apps.monetization.models import Notification, Subscription, SubscriptionPlan, SponsoredProduct
+from apps.kyc.utils import seller_kyc_verified
 
 
 def _active_product_limit(store):
@@ -379,6 +380,13 @@ class StoreViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
+        # Gating KYC (spec §21) : un vendeur ne peut ouvrir de boutique que si
+        # son identité (SellerKYC) a été vérifiée par l'administration.
+        if not seller_kyc_verified(self.request.user):
+            raise PermissionDenied(
+                "Votre identité (KYC) doit être vérifiée par un administrateur "
+                "avant de pouvoir créer une boutique."
+            )
         serializer.save(owner=self.request.user)
 
     def perform_update(self, serializer):

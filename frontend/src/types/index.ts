@@ -355,3 +355,62 @@ export interface Refund {
   refunded_at: string | null;
   created_at: string;
 }
+
+/** Statut d'un dossier KYC (envoyé/par service via SellerKYC / DriverKYC). */
+export type KycStatus = "PENDING" | "UNDER_REVIEW" | "VERIFIED" | "REJECTED";
+
+/**
+ * Dossier KYC vendeur ou livreur. Les identifiants propriétaire (`seller` /
+ * `driver`) sont impartis par le backend : le frontend ne les choisit jamais.
+ */
+export type KycDocument =
+  | KycDocumentBase<'seller', SellerKycOwner>
+  | KycDocumentBase<'driver', DriverKycOwner>;
+
+interface KycDocumentBase<TType extends "seller" | "driver", TOwner> {
+  /** Identifiant du dossier KYC (UUID). */
+  id: string;
+  account_type: TType;
+  owner: TOwner;
+  document_type: string;
+  /** Clé de stockage de la pièce — jamais une URL publique. */
+  document_front: string;
+  document_back: string;
+  /** URL pré-signée à courte durée, générée par Django (admin uniquement). */
+  document_front_url: string;
+  document_back_url: string;
+  status: KycStatus;
+  rejection_reason: string | null;
+  submitted_at: string | null;
+  verified_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SellerKycOwner {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+}
+
+export interface DriverKycOwner {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+}
+
+export interface SellerKyc extends Omit<KycDocumentBase<"seller", SellerKycOwner>, "owner"> {
+  seller: string;
+  seller_name: string;
+  seller_email: string;
+  seller_phone: string;
+}
+
+export interface DriverKyc extends Omit<KycDocumentBase<"driver", DriverKycOwner>, "owner"> {
+  driver: string;
+  driver_name: string;
+  driver_email: string;
+  driver_phone: string;
+}

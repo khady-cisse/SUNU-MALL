@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { KycStatusCard } from "@/components/kyc/KycStatusCard";
 import { formatDate } from "@/lib/utils";
 import type { DeliveryStatus, DriverAvailability } from "@/types";
 
@@ -47,6 +48,8 @@ export default function DriverDashboardPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <KycStatusCard kind="driver" />
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="flex items-center gap-2 font-display text-2xl font-bold text-gray-900">
           <Truck className="h-6 w-6 text-orange" /> Mes courses

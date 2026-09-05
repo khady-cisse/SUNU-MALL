@@ -55,6 +55,8 @@ import AdminManagersPage from "@/pages/admin-managers";
 import AdminShopsPage from "@/pages/admin-shops";
 import AdminOrdersPage from "@/pages/admin-orders";
 import AdminPaymentsPage from "@/pages/admin-payments";
+import AdminKycSellersPage from "@/pages/admin-kyc-sellers";
+import AdminKycDriversPage from "@/pages/admin-kyc-drivers";
 
 export const router = createBrowserRouter([
   { path: "/", element: <Navigate to="/home" replace /> },
@@ -137,6 +139,8 @@ export const router = createBrowserRouter([
       { path: "/admin-shops", element: <AdminShopsPage /> },
       { path: "/admin-orders", element: <AdminOrdersPage /> },
       { path: "/admin-payments", element: <AdminPaymentsPage /> },
+      { path: "/admin-kyc-sellers", element: <AdminKycSellersPage /> },
+      { path: "/admin-kyc-drivers", element: <AdminKycDriversPage /> },
       { path: "/admin-order-detail", element: <OrderDetailPage /> },
       { path: "/admin-notifications", element: <NotificationsPage /> },
     ],
