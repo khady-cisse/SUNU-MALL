@@ -6,8 +6,9 @@ import { CategoryMenu } from "@/components/marketplace/CategoryMenu";
 import { NotificationBell } from "@/components/layout/NotificationBell";
 import { useAuthStore } from "@/store/authStore";
 import { useMerchantKycStore } from "@/store/merchantKycStore";
+import { useCartStore } from "@/store/cartStore";
+import { useWishlistStore } from "@/store/wishlistStore";
 import { roleHomePath } from "@/lib/roles";
-import * as shoppingApi from "@/api/shopping";
 import { cn } from "@/lib/utils";
 
 const NAV_LINKS = [
@@ -30,10 +31,14 @@ export function MarketHeader() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const merchantKyc = useMerchantKycStore();
+  const cartCount = useCartStore((s) => s.cartCount);
+  const fetchCart = useCartStore((s) => s.fetchCart);
+  const resetCart = useCartStore((s) => s.reset);
+  const favCount = useWishlistStore((s) => s.wishlistCount);
+  const fetchWishlist = useWishlistStore((s) => s.fetchWishlist);
+  const resetWishlist = useWishlistStore((s) => s.reset);
   const [query, setQuery] = useState("");
   const [accountOpen, setAccountOpen] = useState(false);
-  const [cartCount, setCartCount] = useState(0);
-  const [favCount, setFavCount] = useState(0);
 
   const isMerchant = !!user?.roles.includes("merchant");
   const hideConnectedAccount = isMerchant && merchantKyc.checked && merchantKyc.status !== "VERIFIED";
@@ -49,19 +54,14 @@ export function MarketHeader() {
 
   useEffect(() => {
     if (!user) {
-      setCartCount(0);
-      setFavCount(0);
+      resetCart();
+      resetWishlist();
       return;
     }
-    shoppingApi
-      .getCart()
-      .then((cart) => setCartCount(cart.items.reduce((sum, item) => sum + item.quantity, 0)))
-      .catch(() => setCartCount(0));
-    shoppingApi
-      .getWishlist()
-      .then((wishlist) => setFavCount(wishlist.items.length))
-      .catch(() => setFavCount(0));
-  }, [user]);
+    fetchCart();
+    fetchWishlist();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();

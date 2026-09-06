@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { QuantityStepper } from "@/components/marketplace/QuantityStepper";
 import { useCheckoutStore } from "@/store/checkoutStore";
 import { useAuthStore } from "@/store/authStore";
+import { useCartStore } from "@/store/cartStore";
 import { formatPrice } from "@/lib/utils";
 import type { CartItem as ApiCartItem, Store } from "@/types";
 
@@ -29,6 +30,7 @@ export default function CartPage() {
   const user = useAuthStore((s) => s.user);
   const { data: cart, loading, refetch } = useAsync(() => (user ? shoppingApi.getCart() : Promise.resolve(null)), [user?.id]);
   const startCheckout = useCheckoutStore((s) => s.startCheckout);
+  const fetchCart = useCartStore((s) => s.fetchCart);
 
   const groups = useMemo(() => groupByStore(cart?.items ?? []), [cart]);
   const storeIds = useMemo(() => groups.map(([storeId]) => storeId), [groups]);
@@ -44,11 +46,13 @@ export default function CartPage() {
     if (quantity < 1) return;
     await shoppingApi.updateCartItem(itemId, quantity);
     refetch();
+    fetchCart();
   }
 
   async function remove(itemId: string) {
     await shoppingApi.removeCartItem(itemId);
     refetch();
+    fetchCart();
   }
 
   function goToCheckout(storeId: string, items: ApiCartItem[]) {

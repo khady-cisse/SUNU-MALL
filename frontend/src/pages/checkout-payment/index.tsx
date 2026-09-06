@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
-import { CheckCircle2, CreditCard, FlaskConical, TriangleAlert, XCircle } from "lucide-react";
+import { CheckCircle2, FlaskConical, TriangleAlert, XCircle } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import * as ordersApi from "@/api/orders";
@@ -10,6 +10,8 @@ import { formatPrice } from "@/lib/utils";
 import { ApiError } from "@/lib/api";
 import type { Order } from "@/types";
 import { PAYMENT_METHODS } from "@/lib/paymentMethods";
+import { CardPaymentForm } from "@/components/checkout/CardPaymentForm";
+import { isCardComplete, type CardDetails } from "@/components/checkout/cardValidation";
 
 const METHODS = PAYMENT_METHODS;
 
@@ -22,6 +24,7 @@ export default function CheckoutPaymentPage() {
   const [sandboxMessage, setSandboxMessage] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<"success" | "failed" | null>(null);
   const [paymentFailed, setPaymentFailed] = useState(false);
+  const [cardDetails, setCardDetails] = useState<CardDetails>({ holder: "", number: "", expiry: "", cvc: "" });
 
   useEffect(() => {
     if (createdOrder?.payment) {
@@ -155,6 +158,8 @@ export default function CheckoutPaymentPage() {
         ))}
       </div>
 
+      {paymentMethod === "card" && <CardPaymentForm onChange={setCardDetails} />}
+
       <Card className="flex flex-col gap-2 text-sm">
         <div className="flex justify-between">
           <span className="text-muted-foreground">Sous-total</span>
@@ -177,7 +182,7 @@ export default function CheckoutPaymentPage() {
         </div>
       )}
 
-      <Button onClick={handleConfirm} loading={submitting} className="w-full">
+      <Button onClick={handleConfirm} loading={submitting} className="w-full" disabled={paymentMethod === "card" && !isCardComplete(cardDetails)}>
         Confirmer et payer {formatPrice(total)}
       </Button>
     </div>

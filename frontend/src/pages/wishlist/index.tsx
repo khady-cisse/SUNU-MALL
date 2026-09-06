@@ -8,15 +8,18 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Button } from "@/components/ui/Button";
 import { useAuthStore } from "@/store/authStore";
+import { useWishlistStore } from "@/store/wishlistStore";
 import { formatPrice } from "@/lib/utils";
 
 export default function WishlistPage() {
   const user = useAuthStore((s) => s.user);
   const { data: wishlist, loading, error, refetch } = useAsync(() => shoppingApi.getWishlist(), []);
+  const fetchWishlist = useWishlistStore((s) => s.fetchWishlist);
 
   async function remove(productId: string) {
     await shoppingApi.removeWishlistItem(productId);
     refetch();
+    fetchWishlist();
   }
 
   if (!user) {

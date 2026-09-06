@@ -3,7 +3,7 @@ import { Navigate, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ChevronRight, MapPin, Navigation, Plus } from "lucide-react";
+import { ChevronRight, MapPin, Navigation, Plus, AlertCircle } from "lucide-react";
 import { useAsync } from "@/hooks/useAsync";
 import * as ordersApi from "@/api/orders";
 import { Card } from "@/components/ui/Card";
@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { useCheckoutStore } from "@/store/checkoutStore";
+import { ApiError } from "@/lib/api";
 
 const schema = z.object({
   label: z.string().min(1, "Libellé requis"),
@@ -24,11 +25,12 @@ export default function CheckoutAddressPage() {
   const navigate = useNavigate();
   const storeId = useCheckoutStore((s) => s.storeId);
   const setAddress = useCheckoutStore((s) => s.setAddress);
-  const { data: addresses, loading } = useAsync(() => ordersApi.listAddresses(), []);
+  const { data: addresses, loading, error: loadError, refetch: refetchAddresses } = useAsync(() => ordersApi.listAddresses(), []);
   const [showForm, setShowForm] = useState(false);
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const {
     register,
@@ -47,7 +49,10 @@ export default function CheckoutAddressPage() {
     setLocationError(null);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setCoords({
+          lat: Number(pos.coords.latitude.toFixed(6)),
+          lng: Number(pos.coords.longitude.toFixed(6)),
+        });
         setLocating(false);
       },
       () => {
@@ -58,12 +63,29 @@ export default function CheckoutAddressPage() {
   }
 
   async function onCreate(values: FormValues) {
-    const address = await ordersApi.createAddress({
-      ...values,
-      ...(coords ? { latitude: coords.lat, longitude: coords.lng } : {}),
-    });
-    setAddress(address);
-    navigate("/checkout-delivery");
+    setSubmitError(null);
+    try {
+      const address = await ordersApi.createAddress({
+        ...values,
+        ...(coords ? { latitude: coords.lat, longitude: coords.lng } : {}),
+      });
+      setAddress(address);
+      navigate("/checkout-delivery");
+    } catch (err) {
+      if (err instanceof ApiError) {
+        const data = err.data as Record<string, unknown> | null;
+        if (typeof data?.detail === "string") {
+          setSubmitError(data.detail);
+        } else if (data && typeof data === "object") {
+          const firstError = Object.values(data)[0];
+          setSubmitError(Array.isArray(firstError) ? String(firstError[0]) : "Adresse invalide.");
+        } else {
+          setSubmitError(`Impossible d'enregistrer l'adresse (${err.status}).`);
+        }
+      } else {
+        setSubmitError("Impossible de contacter le serveur. Vérifiez votre connexion.");
+      }
+    }
   }
 
   function choose(addressId: string) {
@@ -82,6 +104,35 @@ export default function CheckoutAddressPage() {
         <MapPin className="h-6 w-6 text-orange" />
         Adresse de livraison
       </h1>
+
+      {loadError && (
+        <div
+          role="alert"
+          className="flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="flex flex-1 flex-col gap-1">
+            <span>Impossible de charger vos adresses.</span>
+            <button
+              type="button"
+              onClick={refetchAddresses}
+              className="self-start font-semibold text-red-700 underline underline-offset-2"
+            >
+              Réessayer
+            </button>
+          </div>
+        </div>
+      )}
+
+      {submitError && (
+        <div
+          role="alert"
+          className="flex items-start gap-2.5 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{submitError}</span>
+        </div>
+      )}
 
       {addresses && addresses.length > 0 && !showForm && (
         <div className="flex flex-col gap-3">

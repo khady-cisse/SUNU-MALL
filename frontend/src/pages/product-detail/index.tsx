@@ -3,7 +3,6 @@ import { useNavigate, useParams } from "react-router-dom";
 import { CheckCircle2, Heart, ImageOff, MessageSquare, PackageX, ShoppingCart, TriangleAlert } from "lucide-react";
 import { useAsync } from "@/hooks/useAsync";
 import * as catalogApi from "@/api/catalog";
-import * as shoppingApi from "@/api/shopping";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Textarea } from "@/components/ui/Textarea";
@@ -16,6 +15,8 @@ import { ProductRail } from "@/components/marketplace/ProductRail";
 import { useAuthStore } from "@/store/authStore";
 import { useGuestCheckoutStore } from "@/store/guestCheckoutStore";
 import { useRecentlyViewedStore } from "@/store/recentlyViewedStore";
+import { useCartStore } from "@/store/cartStore";
+import { useWishlistStore } from "@/store/wishlistStore";
 import { ApiError } from "@/lib/api";
 import { cn, formatDate, formatPrice } from "@/lib/utils";
 
@@ -25,6 +26,9 @@ export default function ProductDetailPage() {
   const user = useAuthStore((s) => s.user);
   const openGuestCheckout = useGuestCheckoutStore((s) => s.open);
   const addRecentlyViewed = useRecentlyViewedStore((s) => s.addProduct);
+  const addCartItem = useCartStore((s) => s.addItem);
+  const isFav = useWishlistStore((s) => s.has(id ?? ""));
+  const toggleFavorite = useWishlistStore((s) => s.toggleItem);
   const [selectedVariant, setSelectedVariant] = useState<string | null>(null);
   const [activeImage, setActiveImage] = useState(0);
   const [quantity, setQuantity] = useState(1);
@@ -75,7 +79,7 @@ export default function ProductDetailPage() {
     setAdding(true);
     setFeedback(null);
     try {
-      await shoppingApi.addCartItem(variant.id, quantity);
+      await addCartItem(variant.id, quantity);
       setFeedback({ type: "success", text: "Ajouté au panier !" });
     } catch {
       setFeedback({ type: "error", text: "Impossible d'ajouter au panier." });
@@ -98,10 +102,10 @@ export default function ProductDetailPage() {
       return;
     }
     try {
-      await shoppingApi.addWishlistItem(product!.id);
-      setFeedback({ type: "success", text: "Ajouté à la wishlist !" });
+      await toggleFavorite(product!.id);
+      setFeedback({ type: "success", text: isFav ? "Retiré de la wishlist." : "Ajouté à la wishlist !" });
     } catch {
-      setFeedback({ type: "error", text: "Impossible d'ajouter à la wishlist." });
+      setFeedback({ type: "error", text: "Impossible de mettre à jour la wishlist." });
     }
   }
 
@@ -217,8 +221,13 @@ export default function ProductDetailPage() {
               <ShoppingCart className="h-4 w-4" />
               {isAvailable ? "Ajouter au panier" : "Indisponible"}
             </Button>
-            <Button variant="secondary" onClick={handleAddToWishlist} aria-label="Ajouter à la wishlist">
-              <Heart className="h-4 w-4" />
+            <Button
+              variant="secondary"
+              onClick={handleAddToWishlist}
+              aria-label={isFav ? "Retirer de la wishlist" : "Ajouter à la wishlist"}
+              aria-pressed={isFav}
+            >
+              <Heart className={cn("h-4 w-4", isFav && "fill-orange text-orange")} />
             </Button>
           </div>
 

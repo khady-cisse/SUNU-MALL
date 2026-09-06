@@ -265,6 +265,7 @@ class Command(BaseCommand):
                     SponsoredProduct.objects.get_or_create(
                         product=product,
                         defaults={
+                            "store": store,
                             "daily_budget": random.randint(2000, 8000),
                             "starts_at": today - timedelta(days=5),
                             "ends_at": today + timedelta(days=20),
