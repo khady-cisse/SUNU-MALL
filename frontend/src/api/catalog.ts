@@ -191,7 +191,7 @@ export function deleteProduct(id: string) {
 
 export function createVariant(payload: {
   product: string;
-  sku: string;
+  sku?: string;
   attributes?: Record<string, string>;
   price: number;
   initial_quantity?: number;

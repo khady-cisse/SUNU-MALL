@@ -1,0 +1,649 @@
+/* ============================================================
+   SUNU MALL — Thème de l'admin Django
+   Déclinaison de la charte frontend (navy / orange, Inter/Poppins).
+   Surcharge les variables CSS de l'admin Django + finitions de
+   mise en page (login, dashboard, changelist, formulaires).
+   ============================================================ */
+
+:root {
+  --primary: #0a163a;
+  --secondary: #142a5e;
+  --accent: #ff7a00;
+
+  --primary-fg: #ffffff;
+  --body-fg: #111827;
+  --body-bg: #f9fafb;
+  --body-quiet-color: #6b7280;
+  --body-loud-color: #111827;
+
+  --header-color: #ffeda8;
+  --header-branding-color: #ff9833;
+  --header-bg: linear-gradient(135deg, #0a163a 0%, #142a5e 100%);
+  --header-link-color: #ffffff;
+  --header-link-hover-color: #ffb055;
+
+  --breadcrumbs-fg: #cbd5e1;
+  --breadcrumbs-link-fg: #ffb055;
+  --breadcrumbs-bg: #0d1d49;
+
+  --link-fg: #e66a00;
+  --link-hover-color: #ff8c00;
+  --link-selected-fg: #ff7a00;
+
+  --hairline-color: #e5e7eb;
+  --border-color: #d7dbe3;
+  --error-fg: #dc2626;
+  --error-bg: #fef2f2;
+
+  --message-success-bg: #ecfdf5;
+  --message-success-fg: #065f46;
+  --message-warning-bg: #fffbeb;
+  --message-warning-fg: #92400e;
+  --message-error-bg: #fef2f2;
+  --message-error-fg: #991b1b;
+
+  --darkened-bg: #f3f4f6;
+  --selected-bg: #eef2ff;
+  --selected-row: #fff7ed;
+
+  --button-fg: #ffffff;
+  --button-bg: #142a5e;
+  --button-hover-bg: #0a163a;
+  --default-button-bg: #ff7a00;
+  --default-button-hover-bg: #e66a00;
+  --close-button-bg: #6b7280;
+  --close-button-hover-bg: #374151;
+
+  --object-tools-fg: #ffffff;
+  --object-tools-bg: #ff7a00;
+  --object-tools-hover-bg: #e66a00;
+
+  --quiet-fg: #6b7280;
+  --font-family-primary: "Inter", "Poppins", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-family-monospace: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+}
+
+/* ---- Base ─────────────────────────────────────────────── */
+html, body {
+  font-family: var(--font-family-primary);
+}
+
+body {
+  color: var(--body-fg);
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(255, 122, 0, 0.07), transparent 60%),
+    var(--body-bg);
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-family-primary);
+  font-weight: 700;
+}
+
+a {
+  transition: color 0.15s ease;
+}
+
+/* ---- En-tête ───────────────────────────────────────────── */
+#header {
+  color: #ffffff;
+  background: linear-gradient(135deg, #f26b00 0%, #ff8c00 55%, #ffb055 100%);
+  box-shadow: 0 2px 12px rgba(10, 22, 58, 0.18);
+  padding: 12px 40px;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+#branding h1,
+#site-name a {
+  color: #ffffff;
+  font-size: 1.25rem;
+  letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 800;
+}
+
+#branding h1 a:visited {
+  color: #ffffff;
+}
+
+.sm-logo {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: #0a163a;
+  color: #ff9833;
+  font-family: var(--font-family-primary);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+  box-shadow: 0 2px 6px rgba(10, 22, 58, 0.35);
+}
+
+#user-tools {
+  padding: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+#user-tools a {
+  color: rgba(255, 255, 255, 0.92);
+  text-decoration: none;
+}
+#user-tools a:hover {
+  color: #ffffff;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ---- Fil d'Ariane ──────────────────────────────────────── */
+div.breadcrumbs {
+  background: linear-gradient(135deg, #0a163a 0%, #142a5e 100%);
+  color: var(--breadcrumbs-fg);
+  padding: 10px 40px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.85rem;
+  letter-spacing: 0.01em;
+}
+
+/* ---- Contenu ───────────────────────────────────────────── */
+#content {
+  padding: 24px 40px;
+}
+
+#content h1 {
+  font-size: 1.45rem;
+  font-weight: 800;
+  color: #0a163a;
+  padding-bottom: 14px;
+  border-bottom: 2px solid #ffe0bd;
+  margin-bottom: 18px;
+}
+
+/* ---- Modules / cartes ──────────────────────────────────── */
+.module {
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(10, 22, 58, 0.06);
+  overflow: hidden;
+  margin-bottom: 18px;
+}
+
+.module h2, .module caption {
+  background: #fff7ed;
+  border-bottom: 1px solid var(--hairline-color);
+  color: #9a4500;
+  font-weight: 700;
+  padding: 10px 14px;
+  border-radius: 0;
+}
+
+.module h3 {
+  color: var(--body-fg);
+}
+
+/* ---- Dashboard (accueil) ───────────────────────────────── */
+/* Chaque app est rendue comme un <div class="module"> frère dans
+   #content-main : on passe l'accueil en grille de cartes responsive. */
+body.dashboard #content-main {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+body.dashboard #content-main > .module {
+  margin-bottom: 0;
+  border-left: 4px solid #ff7a00;
+}
+
+body.dashboard #content-main .module table {
+  border: 0;
+}
+
+body.dashboard .module caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+body.dashboard .module a.section {
+  color: #0a163a;
+  font-weight: 700;
+  text-decoration: none;
+}
+body.dashboard .module a.section:hover {
+  color: #ff7a00;
+}
+
+body.dashboard .module > table > tbody > tr > th {
+  color: #374151;
+  font-weight: 600;
+}
+
+/* Colonne "Actions récentes" du dashboard */
+body.dashboard #content-related {
+  float: right;
+  width: 28.75%;
+  margin-right: 0;
+}
+
+body.dashboard #content-related .module {
+  border-left: 4px solid #e66a00;
+}
+
+body.dashboard #content-main {
+  float: left;
+  width: 69.5%;
+}
+
+body.dashboard #content-main,
+body.dashboard #content-related {
+  margin-bottom: 20px;
+}
+
+body.dashboard .module table th,
+body.dashboard .module table td {
+  padding: 10px 14px;
+}
+
+/* Liste d'actions récentes plus lisible */
+.actionlist li {
+  border-bottom: 1px solid var(--hairline-color);
+  padding: 8px 6px;
+}
+.actionlist li:last-child {
+  border-bottom: 0;
+}
+.actionlist li:visited,
+.actionlist li a:visited {
+  color: var(--link-fg);
+}
+
+/* ---- Sidebar de navigation ─────────────────────────────── */
+#toggle-nav-sidebar {
+  color: #7c3a00;
+  background: #fff7ed;
+  border: 1px solid var(--hairline-color);
+  border-radius: 8px;
+}
+#toggle-nav-sidebar:hover {
+  background: #ff7a00;
+  color: #ffffff;
+}
+
+.sidebar-module {
+  background: #ffffff;
+  border: 1px solid var(--hairline-color);
+  border-radius: 14px;
+  padding: 6px;
+  box-shadow: 0 1px 3px rgba(10, 22, 58, 0.06);
+}
+
+.nav-sidebar .module caption,
+.nav-sidebar .module h2 {
+  background: transparent;
+  border: 0;
+  color: #9a4500;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 10px 12px 4px;
+}
+
+.nav-sidebar ul li a {
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-weight: 500;
+  color: #374151;
+}
+.nav-sidebar ul li a:hover {
+  background: #fff7ed;
+  color: #e66a00;
+}
+.nav-sidebar ul li.selected > a {
+  background: #0a163a;
+  color: #ffffff;
+}
+
+/* ---- Barre d'outils de liste (recherche / actions) ─────── */
+#toolbar {
+  background: #ffffff;
+  border: 1px solid var(--hairline-color);
+  border-radius: 12px;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+}
+
+#changelist-search input[type="text"],
+#changelist-search input[type="submit"],
+#toolbar #searchbar {
+  border-radius: 8px;
+}
+
+/* ---- Changelist ────────────────────────────────────────── */
+#changelist {
+  border-radius: 14px;
+  border: 1px solid var(--hairline-color);
+  background: #ffffff;
+  overflow: hidden;
+}
+
+#changelist .results {
+  border: 0;
+  border-radius: 0;
+}
+
+#changelist table,
+#result-list table {
+  box-shadow: none;
+  border-top: 1px solid var(--hairline-color);
+}
+
+thead th {
+  background: #fff7ed !important;
+  color: #7c3a00 !important;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--hairline-color);
+}
+
+thead th.sorted a,
+thead th a {
+  color: #7c3a00 !important;
+}
+thead th.sorted {
+  background: #ffe9d2 !important;
+}
+
+tbody tr:nth-child(even) {
+  background: #fcfcfd;
+}
+
+tbody tr:hover {
+  background-color: #fff7ed;
+}
+
+th, td {
+  padding: 11px 14px;
+  vertical-align: middle;
+}
+
+tr.selected {
+  background-color: var(--selected-row) !important;
+}
+
+/* ---- Actions en liste ──────────────────────────────────── */
+.actions {
+  background: #fffdf8;
+  border-bottom: 1px solid var(--hairline-color);
+}
+
+.actions select {
+  border-radius: 8px;
+}
+
+/* ---- Filtres latéraux ──────────────────────────────────── */
+#changelist-filter {
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: #ffffff;
+}
+#changelist-filter h2 {
+  background: #fff7ed;
+  color: #9a4500;
+  border-radius: 12px 12px 0 0;
+}
+#changelist-filter li {
+  border-top: 1px solid var(--hairline-color);
+}
+#changelist-filter li.selected a {
+  background: #0a163a;
+  color: #ffffff;
+  border-radius: 6px;
+  margin: 2px 8px;
+  padding: 4px 8px;
+}
+
+/* ---- Pagination ────────────────────────────────────────── */
+.paginator {
+  background: #fff7ed;
+  border-top: 1px solid var(--hairline-color);
+  color: #7c3a00 !important;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+  padding: 10px 14px !important;
+}
+.paginator a {
+  border-radius: 8px;
+  padding: 5px 10px;
+  background: #ffffff;
+  border: 1px solid var(--hairline-color);
+  color: var(--link-fg);
+  text-decoration: none;
+}
+.paginator a:hover {
+  background: #ff7a00;
+  border-color: #ff7a00;
+  color: #ffffff;
+}
+.paginator .this-page {
+  background: #0a163a;
+  color: #ffffff;
+  border-radius: 8px;
+  padding: 5px 10px;
+}
+
+/* ---- Formulaires ───────────────────────────────────────── */
+.form-row {
+  align-items: center;
+}
+
+.form-row label,
+.aligned label {
+  font-weight: 600;
+  color: #374151;
+}
+
+.form-row .help,
+.help {
+  color: var(--body-quiet-color);
+  font-size: 0.8rem;
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="url"],
+select,
+textarea {
+  border-radius: 9px;
+  border: 1px solid var(--border-color);
+  padding: 8px 12px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input[type="text"]:focus,
+input[type="email"]:focus,
+input[type="password"]:focus,
+input[type="number"]:focus,
+input[type="url"]:focus,
+select:focus,
+textarea:focus {
+  border-color: #ff9833;
+  box-shadow: 0 0 0 4px rgba(255, 122, 0, 0.15);
+}
+
+fieldset.module {
+  border: 1px solid var(--hairline-color);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 18px;
+}
+
+fieldset.module h2 {
+  background: #fff7ed;
+  color: #7c3a00;
+  padding: 10px 16px;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0;
+}
+
+fieldset .form-row {
+  padding: 12px 16px;
+}
+
+fieldset .form-row:nth-child(odd) {
+  background: #fcfcfd;
+}
+
+/* ---- Boutons ───────────────────────────────────────────── */
+.button, input[type="submit"], input[type="button"], .submit-row input,
+a.button {
+  border-radius: 9px;
+  font-weight: 600;
+  padding: 9px 20px;
+  box-shadow: 0 1px 2px rgba(10, 22, 58, 0.12);
+  transition: background 0.15s ease, transform 0.05s ease, box-shadow 0.15s ease;
+}
+.button:hover, .button:focus,
+input[type="submit"]:hover, input[type="submit"]:focus {
+  box-shadow: 0 4px 10px rgba(255, 122, 0, 0.25);
+}
+.button:active, input[type="submit"]:active {
+  transform: translateY(1px);
+}
+
+/* Bouton "Enregistrer" = action principale (orange) */
+input.default, .submit-row input.default {
+  background: var(--default-button-bg);
+}
+input.default:hover,
+.submit-row input.default:hover {
+  background: var(--default-button-hover-bg);
+}
+
+.submit-row {
+  background: #ffffff;
+  border: 1px solid var(--hairline-color);
+  border-radius: 12px;
+  padding: 12px 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  position: sticky;
+  bottom: 12px;
+  box-shadow: 0 8px 24px rgba(10, 22, 58, 0.08);
+}
+
+/* ---- Outils d'objet (Ajouter, etc.) ────────────────────── */
+.object-tools .addlink {
+  border-radius: 9px;
+  padding: 7px 16px;
+  box-shadow: 0 1px 3px rgba(255, 122, 0, 0.3);
+  font-weight: 600;
+}
+.object-tools a {
+  border-radius: 9px;
+}
+
+/* ---- Messages ───────────────────────────────────────────── */
+ul.messagelist li {
+  border-radius: 10px;
+  padding: 10px 32px 10px 44px;
+  box-shadow: 0 1px 4px rgba(10, 22, 58, 0.06);
+  margin-bottom: 8px;
+  background-position: 14px 12px;
+}
+
+/* ---- Page de connexion ─────────────────────────────────── */
+.login {
+  background:
+    radial-gradient(900px 500px at 15% -10%, rgba(255, 122, 0, 0.28), transparent 55%),
+    linear-gradient(160deg, #0a163a 0%, #142a5e 100%) !important;
+}
+
+.login #header {
+  background: transparent;
+  box-shadow: none;
+  position: static;
+}
+
+.login #content {
+  padding: 24px 16px;
+}
+
+.login form {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.5);
+  padding: 30px 28px;
+}
+
+.login form label {
+  color: #374151;
+}
+
+.login .submit-row {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  position: static;
+  box-shadow: none;
+}
+
+.login .button, .login input[type="submit"] {
+  width: 100%;
+  padding: 11px 18px;
+}
+
+/* ---- Inline (stacked/tabular) ──────────────────────────── */
+.inline-group {
+  border-radius: 12px;
+  border: 1px solid var(--hairline-color);
+  overflow: hidden;
+}
+.inline-related h3,
+.inline-group .tabular td.original p {
+  background: #fff7ed;
+  border-bottom: 1px solid var(--hairline-color);
+}
+
+/* ---- Liens de champs liés ──────────────────────────────── */
+.related-widget-wrapper-link {
+  opacity: 0.75;
+}
+.related-widget-wrapper-link:hover {
+  opacity: 1;
+}
+
+/* ---- Responsive ────────────────────────────────────────── */
+@media (max-width: 767px) {
+  #header {
+    padding: 10px 16px;
+  }
+  div.breadcrumbs {
+    padding: 8px 16px;
+  }
+  #content {
+    padding: 16px;
+  }
+  .login form {
+    padding: 22px 18px;
+  }
+}

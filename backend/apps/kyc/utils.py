@@ -2,6 +2,7 @@
 Fonctions transverses KYC : contrôle d'accès après vérification,
 notifications utilisateur et journal d'audit des actions admin.
 """
+from django.conf import settings
 from apps.monetization.models import Notification
 from apps.users.models import Role
 from .models import DriverKYC, KYCAuditLog, SellerKYC
@@ -52,19 +53,24 @@ def notify_kyc_approved(user):
         user,
         subject="✅ Identité vérifiée",
         message=(
+            "Bonjour,\n\n"
             "Votre identité a été vérifiée avec succès par Sunu Mall.\n"
-            "Vous pouvez maintenant utiliser les fonctionnalités autorisées de votre compte."
+            "Votre espace vendeur est désormais ouvert.\n\n"
+            f"Connectez-vous ici : {settings.FRONTEND_URL}/login\n\n"
+            "Cordialement,\nL'équipe Sunu Mall"
         ),
     )
 
 
 def notify_kyc_rejected(user, reason=""):
     message = (
+        "Bonjour,\n\n"
         "Nous n'avons pas pu valider votre identité.\n"
-        "Consultez le motif du rejet et envoyez à nouveau vos documents."
+        "Renouvelez votre demande et envoyez à nouveau vos documents.\n"
     )
     if reason:
-        message += f"\n\nMotif du rejet : {reason}"
+        message += f"\nMotif du rejet : {reason}\n"
+    message += f"\nConnectez-vous ici : {settings.FRONTEND_URL}/login\n\nCordialement,\nL'équipe Sunu Mall"
     _notify(user, subject="⚠️ Vérification à refaire", message=message)
 
 

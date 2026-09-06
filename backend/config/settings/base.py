@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     "apps.ia",
     "apps.auth",
     "apps.kyc",
+    "apps.commissions",
 ]
 
 MIDDLEWARE = [
@@ -97,6 +98,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.monetization.tasks.expire_and_remind_subscriptions",
         "schedule": 24 * 60 * 60,  # toutes les 24h
     },
+    "release-pending-funds-daily": {
+        "task": "apps.commissions.tasks.release_pending_funds_task",
+        "schedule": 24 * 60 * 60,  # toutes les 24h
+    },
 }
 
 # --- Stockage fichiers (MinIO, compatible API S3) ---
@@ -120,6 +125,9 @@ AWS_S3_USE_SSL = config("MINIO_USE_SSL", default=False, cast=bool)
 AWS_QUERYSTRING_AUTH = False
 AWS_DEFAULT_ACL = None
 _minio_public_endpoint = config("MINIO_PUBLIC_ENDPOINT", default="")
+# Exposé comme réglage public pour que le cache des URLs signées KYC puisse
+# signer directement contre cet hôte (voir apps/kyc/storage.signed_url).
+MINIO_PUBLIC_ENDPOINT = _minio_public_endpoint
 if _minio_public_endpoint:
     # MinIO utilise l'adressage "path-style" (endpoint/bucket/clé), pas le
     # style "virtual-hosted" (bucket.endpoint/clé) que django-storages suppose
@@ -138,6 +146,16 @@ KYC_STORAGE_BACKEND = config("KYC_STORAGE_BACKEND", default="s3")
 KYC_STORAGE_BUCKET = config("KYC_STORAGE_BUCKET", default="sunu-mall-private")
 KYC_STORAGE_LOCATION = config("KYC_STORAGE_LOCATION", default=str(BASE_DIR / "media_kyc"))
 KYC_PRESIGNED_URL_TTL = config("KYC_PRESIGNED_URL_TTL", default=300, cast=int)
+
+# --- Commission et portefeuilles vendeurs (apps/commissions) ---
+# Durée de l'essai à 0 % de commission à partir de la création du compte (§3).
+COMMISSION_TRIAL_DAYS = config("COMMISSION_TRIAL_DAYS", default=30, cast=int)
+# Période de grâce après expiration de l'essai ou de l'abonnement pendant
+# laquelle le vendeur continue de vendre au taux de son dernier plan (§18) —
+# au-delà, il ne reçoit plus de nouvelles commandes.
+COMMISSION_GRACE_DAYS = config("COMMISSION_GRACE_DAYS", default=7, cast=int)
+# Délai de libération des fonds d'une vente livrée (pending → available, §9).
+COMMISSION_RELEASE_DAYS = config("COMMISSION_RELEASE_DAYS", default=3, cast=int)
 
 # DRF
 REST_FRAMEWORK = {
@@ -229,6 +247,9 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+# Statique maison (thème de l'admin Django, etc.) servie en plus de la
+# statique de Django et des applications en développement.
+STATICFILES_DIRS = [BASE_DIR / "static"]
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Email Configuration

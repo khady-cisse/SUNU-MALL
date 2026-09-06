@@ -1,8 +1,16 @@
+from django.db import transaction
 from rest_framework import serializers
 from django.contrib.auth import authenticate
+from apps.kyc.serializers import KYC_DOCUMENT_TYPES
 from apps.users.models import User, Role, UserRole
 
 ALLOWED_REGISTRATION_ROLES = {'client', 'merchant', 'driver'}
+
+# Pièces d'identité exigées à l'inscription d'un compte vendeur. Le dossier
+# KYC est ensuite examiné par l'administration avant toute ouverture de
+# boutique (voir apps/kyc/utils.seller_kyc_verified et apps/catalog).
+_KYC_MAX_SIZE = 8 * 1024 * 1024
+
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=8)
@@ -12,29 +20,100 @@ class RegisterSerializer(serializers.ModelSerializer):
         required=False,
         default='client',
     )
+    # Pièces d'identité — obligatoires SEULEMENT pour les vendeurs (validation
+    # côte à côte dans validate()).
+    document_type = serializers.ChoiceField(
+        choices=[(value, label) for value, label in KYC_DOCUMENT_TYPES],
+        write_only=True,
+        required=False,
+    )
+    document_front = serializers.FileField(write_only=True, required=False)
+    document_back = serializers.FileField(write_only=True, required=False)
 
     class Meta:
         model = User
-        fields = ('email', 'first_name', 'last_name', 'phone', 'password', 'role_name')
+        fields = ('email', 'first_name', 'last_name', 'phone', 'password',
+                  'role_name', 'document_type', 'document_front', 'document_back')
+
+    def validate_document_front(self, value):
+        return self._validate_document(value)
+
+    def validate_document_back(self, value):
+        return self._validate_document(value)
+
+    def validate(self, attrs):
+        role_name = attrs.get('role_name', 'client')
+
+        if role_name == 'merchant':
+            missing = [
+                name for name in ('document_type', 'document_front', 'document_back')
+                if name not in attrs
+            ]
+            if missing:
+                raise serializers.ValidationError({
+                    'detail': (
+                        "La vérification d'identité est obligatoire pour un compte "
+                        "vendeur. Pièce manquante : " + ', '.join(missing) + "."
+                    )
+                })
+        else:
+            provided = [
+                name for name in ('document_type', 'document_front', 'document_back')
+                if name in self.initial_data
+            ]
+            if provided:
+                raise serializers.ValidationError({
+                    'detail': "Les pièces d'identité ne concernent que les comptes vendeurs."
+                })
+
+        return attrs
 
     def create(self, validated_data):
         role_name = validated_data.pop('role_name', 'client')
 
         username = validated_data['email']
 
-        user = User.objects.create_user(
-            username=username,
-            email=validated_data['email'],
-            password=validated_data['password'],
-            first_name=validated_data.get('first_name', ''),
-            last_name=validated_data.get('last_name', ''),
-            phone=validated_data.get('phone', '')
-        )
+        with transaction.atomic():
+            user = User.objects.create_user(
+                username=username,
+                email=validated_data['email'],
+                password=validated_data['password'],
+                first_name=validated_data.get('first_name', ''),
+                last_name=validated_data.get('last_name', ''),
+                phone=validated_data.get('phone', '')
+            )
 
-        role, _ = Role.objects.get_or_create(name=role_name)
-        UserRole.objects.create(user=user, role=role)
+            role, _ = Role.objects.get_or_create(name=role_name)
+            UserRole.objects.create(user=user, role=role)
 
-        return user
+            if role_name == 'merchant':
+                self._create_seller_kyc(user, validated_data)
+
+            return user
+
+    @staticmethod
+    def _create_seller_kyc(user, data):
+        """Crée le dossier d'identité du vendeur dès l'inscription (PENDING)."""
+        from django.utils import timezone
+        from apps.kyc.models import SellerKYC
+        from apps.kyc.storage import save_document
+
+        kyc = SellerKYC.objects.create(seller=user)
+        kyc.document_type = data['document_type']
+        kyc.document_front = save_document(kyc, 'front', data['document_front'])
+        kyc.document_back = save_document(kyc, 'back', data['document_back'])
+        kyc.status = SellerKYC.Status.PENDING
+        kyc.submitted_at = timezone.now()
+        kyc.save(update_fields=[
+            'document_type', 'document_front', 'document_back',
+            'status', 'submitted_at', 'updated_at',
+        ])
+
+    @staticmethod
+    def _validate_document(value):
+        if value.size > _KYC_MAX_SIZE:
+            raise serializers.ValidationError("Chaque pièce doit faire moins de 8 Mo.")
+        return value
 
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()

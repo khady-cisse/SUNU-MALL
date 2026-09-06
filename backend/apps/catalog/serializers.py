@@ -1,3 +1,5 @@
+import uuid
+
 from rest_framework import serializers
 from .models import Category, Inventory, Product, ProductImage, ProductVariant, Review, Store, StoreCategory, StoreSettings
 
@@ -86,6 +88,9 @@ class ProductVariantSerializer(serializers.ModelSerializer):
     is_available = serializers.SerializerMethodField()
     quantity = serializers.SerializerMethodField()
     initial_quantity = serializers.IntegerField(write_only=True, required=False, default=100, min_value=0)
+    # Référence interne facultative : si absente ou vide, un code unique est
+    # généré automatiquement (le vendeur ne connaît pas forcément le concept de SKU).
+    sku = serializers.CharField(required=False, allow_blank=True, max_length=100)
 
     class Meta:
         model = ProductVariant
@@ -102,8 +107,17 @@ class ProductVariantSerializer(serializers.ModelSerializer):
     def get_quantity(self, obj):
         return obj.inventory.available() if hasattr(obj, "inventory") else 0
 
+    def _generate_sku(self, product_id):
+        for _ in range(5):
+            candidate = f"P{product_id}-{uuid.uuid4().hex[:6].upper()}"
+            if not ProductVariant.objects.filter(sku=candidate).exists():
+                return candidate
+        return f"P{product_id}-{uuid.uuid4().hex[:12].upper()}"
+
     def create(self, validated_data):
         initial_quantity = validated_data.pop("initial_quantity", 100)
+        if not (validated_data.get("sku") or "").strip():
+            validated_data["sku"] = self._generate_sku(validated_data["product"].id)
         variant = super().create(validated_data)
         Inventory.objects.create(variant=variant, quantity=initial_quantity)
         return variant

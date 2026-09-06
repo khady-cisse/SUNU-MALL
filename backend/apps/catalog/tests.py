@@ -119,3 +119,17 @@ class CatalogOwnershipTests(TestCase):
         self.assertTrue(hasattr(variant, "inventory"))
         self.assertEqual(variant.inventory.quantity, 42)
         self.assertTrue(variant.is_available())
+
+    def test_variant_without_sku_gets_auto_generated_unique_sku(self):
+        """Le vendeur peut omettre la référence : un code unique est généré (pas d'erreur 400)."""
+        self.client.force_authenticate(self.owner)
+        response = self.client.post(
+            "/api/catalog/variants/",
+            {"product": str(self.product.id), "price": "2000", "initial_quantity": 10},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        variant = ProductVariant.objects.get(product=self.product)
+        self.assertTrue(variant.sku)
+        self.assertTrue(variant.sku.startswith(f"P{self.product.id}-"))
+        self.assertTrue(variant.is_available())

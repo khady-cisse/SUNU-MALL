@@ -3,6 +3,7 @@ from django.contrib.auth.models import update_last_login
 from django.conf import settings
 from rest_framework import generics, permissions, status
 from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
@@ -88,6 +89,9 @@ class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
     throttle_classes = [AuthAnonRateThrottle]
+    # L'inscription vendeur embarque les pièces d'identité : on accepte le
+    # multipart en prévision, sinon DRF rejette les fichiers (400).
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -98,6 +102,7 @@ class RegisterView(generics.CreateAPIView):
         send_verification_email(user)
 
         roles = [ur.role.name for ur in user.user_roles.select_related('role')]
+        is_merchant = 'merchant' in roles
 
         return Response({
             "user": {
@@ -112,7 +117,12 @@ class RegisterView(generics.CreateAPIView):
             },
             "access": None,
             "refresh": None,
-            "message": "Inscription réussie ! Vérifiez votre email pour activer votre compte."
+            "message": (
+                "Inscription réussie ! Vérifiez votre email pour activer votre compte."
+                if not is_merchant
+                else "Inscription réussie ! Vérifiez votre email, puis notre équipe "
+                     "examinera vos pièces d'identité avant l'ouverture de votre boutique."
+            ),
         }, status=status.HTTP_201_CREATED)
 
 class LoginView(generics.GenericAPIView):

@@ -12,7 +12,7 @@ export default function RegisterMerchantPage() {
         <div>
           <h1 className="font-display text-2xl font-extrabold text-gray-900">Ouvrir une boutique</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Créez votre compte commerçant, vous pourrez configurer votre boutique après vérification de votre email.
+            Créez votre compte commerçant : votre pièce d'identité sera vérifiée avant l'ouverture de votre boutique.
           </p>
         </div>
       </div>

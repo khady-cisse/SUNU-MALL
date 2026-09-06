@@ -6,6 +6,7 @@ import { CheckoutLayout } from "@/components/layout/CheckoutLayout";
 import { MerchantLayout } from "@/components/layout/MerchantLayout";
 import { DriverLayout } from "@/components/layout/DriverLayout";
 import { AdminLayout } from "@/components/layout/AdminLayout";
+import { KycSessionWatcher } from "@/components/auth/KycSessionWatcher";
 
 import SplashPage from "@/pages/splash";
 import LoginPage from "@/pages/login";
@@ -44,6 +45,8 @@ import SubscriptionsPage from "@/pages/subscriptions";
 import AnalyticsPage from "@/pages/analytics";
 import LiveSalesPage from "@/pages/live-sales";
 import OrderDetailPage from "@/pages/order-detail";
+import SellerWalletPage from "@/pages/seller-wallet";
+import SellerPayoutsPage from "@/pages/seller-payouts";
 
 import DriverDashboardPage from "@/pages/driver-dashboard";
 import DriverDeliveryPage from "@/pages/driver-delivery";
@@ -57,9 +60,13 @@ import AdminOrdersPage from "@/pages/admin-orders";
 import AdminPaymentsPage from "@/pages/admin-payments";
 import AdminKycSellersPage from "@/pages/admin-kyc-sellers";
 import AdminKycDriversPage from "@/pages/admin-kyc-drivers";
+import AdminFinancePage from "@/pages/admin-finance";
 
 export const router = createBrowserRouter([
-  { path: "/", element: <Navigate to="/home" replace /> },
+  {
+    element: <KycSessionWatcher />,
+    children: [
+      { path: "/", element: <Navigate to="/home" replace /> },
 
   {
     element: <AuthLayout />,
@@ -116,6 +123,8 @@ export const router = createBrowserRouter([
       { path: "/analytics", element: <AnalyticsPage /> },
       { path: "/live-sales", element: <LiveSalesPage /> },
       { path: "/order-detail", element: <OrderDetailPage /> },
+      { path: "/merchant-wallet", element: <SellerWalletPage /> },
+      { path: "/merchant-payouts", element: <SellerPayoutsPage /> },
       { path: "/merchant-notifications", element: <NotificationsPage /> },
     ],
   },
@@ -141,10 +150,13 @@ export const router = createBrowserRouter([
       { path: "/admin-payments", element: <AdminPaymentsPage /> },
       { path: "/admin-kyc-sellers", element: <AdminKycSellersPage /> },
       { path: "/admin-kyc-drivers", element: <AdminKycDriversPage /> },
+      { path: "/admin-finance", element: <AdminFinancePage /> },
       { path: "/admin-order-detail", element: <OrderDetailPage /> },
       { path: "/admin-notifications", element: <NotificationsPage /> },
     ],
   },
 
   { path: "*", element: <Navigate to="/home" replace /> },
+    ],
+  },
 ]);

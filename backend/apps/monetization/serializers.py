@@ -25,7 +25,10 @@ class SponsoredProductSerializer(serializers.ModelSerializer):
 class SubscriptionPlanSerializer(serializers.ModelSerializer):
     class Meta:
         model = SubscriptionPlan
-        fields = ["id", "name", "price", "billing_cycle", "features", "max_products", "created_at"]
+        fields = [
+            "id", "name", "price", "billing_cycle", "features", "max_products",
+            "commission_rate", "duration_days", "is_active", "created_at",
+        ]
         read_only_fields = ["id", "created_at"]
 
 

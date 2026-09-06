@@ -33,6 +33,10 @@ def expire_and_remind_subscriptions():
         subscription.status = Subscription.Status.EXPIRED
         subscription.save(update_fields=["status"])
         subscription.notify_expired()
+        # Entitlement commission du vendeur synchronisé (spec §17-§18) :
+        # au-delà de la période de grâce le vendeur ne reçoit plus de commande.
+        from apps.commissions.services import sync_plan_from_subscription
+        sync_plan_from_subscription(subscription)
 
     # Rappel unique "expire bientôt" dans la fenêtre des 3 prochains jours.
     soon_cutoff = today + timedelta(days=3)

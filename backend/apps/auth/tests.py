@@ -1,18 +1,24 @@
 """
 Tests unitaires pour l'application auth.
 """
+import shutil
+import tempfile
 from unittest.mock import patch
 
 from django.conf import settings
 from django.core import mail
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
+from apps.kyc.models import SellerKYC
 from apps.users.models import User, Role, UserRole
 from apps.auth.utils import email_verification_token, send_verification_email
 from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
+
+mkdtemp = tempfile.mkdtemp
 
 
 class AuthTests(TestCase):
@@ -449,3 +455,105 @@ class AuthTests(TestCase):
         self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(mail.outbox[0].subject, "Vérifiez votre email - SUNU MALL")
         self.assertIn('/verify-email?uid=', mail.outbox[0].body)
+
+
+class MerchantRegistrationIdentityTests(TestCase):
+    """
+    L'inscription d'un compte vendeur exige une pièce d'identité : le dossier
+    SellerKYC est créé immédiatement (PENDING) pour examen par l'admin.
+    Les comptes client ne doivent rien transporter de tel.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.register_url = reverse('auth_register')
+        Role.objects.get_or_create(name=Role.RoleName.MERCHANT)
+        Role.objects.get_or_create(name=Role.RoleName.CLIENT)
+        self.tmp = mkdtemp()
+        self.storage_override = override_settings(
+            KYC_STORAGE_BACKEND="fs",
+            KYC_STORAGE_LOCATION=self.tmp,
+        )
+        self.storage_override.enable()
+
+    def tearDown(self):
+        self.storage_override.disable()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    @staticmethod
+    def _pdf(name="id_front.pdf"):
+        return SimpleUploadedFile(name, b"%PDF-1.4 fake-pdf-content", content_type="application/pdf")
+
+    def _base_payload(self, role="merchant", email="seller@example.com"):
+        return {
+            "email": email,
+            "password": "testpassword123",
+            "first_name": "Awa",
+            "last_name": "Diop",
+            "phone": "+221771234567",
+            "role_name": role,
+        }
+
+    def test_merchant_register_without_identity_documents_is_400(self):
+        with patch('apps.auth.views.send_verification_email') as mocked_send:
+            response = self.client.post(self.register_url, self._base_payload(), format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(User.objects.count(), 0)
+        self.assertEqual(SellerKYC.objects.count(), 0)
+        mocked_send.assert_not_called()
+
+    def test_merchant_register_partial_documents_is_400(self):
+        payload = self._base_payload()
+        payload["document_type"] = "cni"
+        payload["document_front"] = self._pdf("front.pdf")
+        with patch('apps.auth.views.send_verification_email') as mocked_send:
+            response = self.client.post(self.register_url, payload, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(User.objects.count(), 0)
+        mocked_send.assert_not_called()
+
+    def test_merchant_register_with_identity_documents_creates_pending_kyc(self):
+        payload = self._base_payload()
+        payload.update({
+            "document_type": "cni",
+            "document_front": self._pdf("front.pdf"),
+            "document_back": self._pdf("back.pdf"),
+        })
+        with patch('apps.auth.views.send_verification_email') as mocked_send:
+            response = self.client.post(self.register_url, payload, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["user"]["roles"], ["merchant"])
+        self.assertIn("pièces d'identité", response.data["message"])
+        mocked_send.assert_called_once()
+
+        user = User.objects.get(email=payload["email"])
+        kyc = SellerKYC.objects.get(seller=user)
+        self.assertEqual(kyc.status, SellerKYC.Status.PENDING)
+        self.assertIsNotNone(kyc.submitted_at)
+        self.assertTrue(kyc.document_front.startswith("kyc/sellers/"))
+        self.assertTrue(kyc.document_front.endswith(".pdf"))
+        self.assertNotEqual(kyc.document_front, kyc.document_back)
+
+    def test_client_register_with_documents_is_rejected(self):
+        payload = self._base_payload(role="client", email="client@example.com")
+        payload.update({
+            "document_type": "cni",
+            "document_front": self._pdf("front.pdf"),
+            "document_back": self._pdf("back.pdf"),
+        })
+        with patch('apps.auth.views.send_verification_email') as mocked_send:
+            response = self.client.post(self.register_url, payload, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("ne concernent que les comptes vendeurs", str(response.data))
+        self.assertEqual(User.objects.count(), 0)
+        mocked_send.assert_not_called()
+
+    def test_client_register_plain_json_still_works(self):
+        payload = self._base_payload(role="client", email="client@example.com")
+        del payload["role_name"]
+        with patch('apps.auth.views.send_verification_email') as mocked_send:
+            response = self.client.post(self.register_url, payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        user = User.objects.get(email=payload["email"])
+        self.assertFalse(SellerKYC.objects.filter(seller=user).exists())
+        mocked_send.assert_called_once()

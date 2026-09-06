@@ -1,6 +1,11 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 import type { AuthUser, Role } from "@/types";
+
+// La session n'est plus persistée (localStorage) : la plateforme s'ouvre
+// toujours « Se connecter ». On nettoie l'ancienne clé si elle existait.
+if (typeof localStorage !== "undefined") {
+  localStorage.removeItem("sunu-mall-auth");
+}
 
 export type { AuthUser, Role };
 
@@ -23,36 +28,26 @@ interface AuthState {
   setHasHydrated: (value: boolean) => void;
 }
 
-export const useAuthStore = create<AuthState>()(
-  persist(
-    (set, get) => ({
-      user: null,
-      accessToken: null,
-      refreshToken: null,
-      hasHydrated: false,
+export const useAuthStore = create<AuthState>()((set, get) => ({
+  user: null,
+  accessToken: null,
+  refreshToken: null,
+  hasHydrated: true,
 
-      loginSuccess: ({ user, access, refresh }) =>
-        set({ user, accessToken: access, refreshToken: refresh }),
+  loginSuccess: ({ user, access, refresh }) =>
+    set({ user, accessToken: access, refreshToken: refresh }),
 
-      setTokens: (access, refresh) =>
-        set((state) => ({
-          accessToken: access,
-          refreshToken: refresh ?? state.refreshToken,
-        })),
+  setTokens: (access, refresh) =>
+    set((state) => ({
+      accessToken: access,
+      refreshToken: refresh ?? state.refreshToken,
+    })),
 
-      updateUser: (patch) => set((state) => (state.user ? { user: { ...state.user, ...patch } } : {})),
+  updateUser: (patch) => set((state) => (state.user ? { user: { ...state.user, ...patch } } : {})),
 
-      logout: () => set({ user: null, accessToken: null, refreshToken: null }),
+  logout: () => set({ user: null, accessToken: null, refreshToken: null }),
 
-      hasRole: (role) => !!get().user?.roles.includes(role),
+  hasRole: (role) => !!get().user?.roles.includes(role),
 
-      setHasHydrated: (value) => set({ hasHydrated: value }),
-    }),
-    {
-      name: "sunu-mall-auth",
-      onRehydrateStorage: () => (state) => {
-        state?.setHasHydrated(true);
-      },
-    },
-  ),
-);
+  setHasHydrated: (value) => set({ hasHydrated: value }),
+}));

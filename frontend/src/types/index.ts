@@ -306,6 +306,13 @@ export interface SubscriptionPlan {
   price: string;
   billing_cycle: string;
   features: Record<string, unknown>;
+  max_products: number | null;
+  /** Taux de commission (en %) prélevé sur les ventes pendant la période. */
+  commission_rate: string;
+  /** Durée (jours) d'une période d'abonnement achetée une seule fois. */
+  duration_days: number;
+  /** Seuls les plans actifs sont proposés aux commerçants. */
+  is_active: boolean;
   created_at: string;
 }
 
@@ -413,4 +420,112 @@ export interface DriverKyc extends Omit<KycDocumentBase<"driver", DriverKycOwner
   driver_name: string;
   driver_email: string;
   driver_phone: string;
+}
+
+/** Portefeuille vendeur — soldes toujours calculés côté backend (§9). */
+export interface SellerWallet {
+  seller: string;
+  available_balance: string;
+  pending_balance: string;
+  total_earned: string;
+  total_withdrawn: string;
+}
+
+export type WalletTransactionType = "sale" | "commission" | "refund" | "payout" | "release" | "adjustment";
+
+/**
+ * Ligne du ledger du portefeuille vendeur (§10) : chaque mouvement porte les
+ * soldes (disponible / en attente) avant et après l'opération.
+ */
+export interface WalletTransaction {
+  id: number;
+  type: WalletTransactionType;
+  amount: string;
+  available_before: string;
+  available_after: string;
+  pending_before: string;
+  pending_after: string;
+  reference: string;
+  order: string | null;
+  description: string;
+  created_at: string;
+}
+
+export type SellerCommissionStatus = "trial" | "active" | "expired" | "cancelled";
+
+/** Entitlement commission du vendeur : essai, plan, taux figé applicable (§4, §12). */
+export interface SellerCommissionSubscription {
+  status: SellerCommissionStatus;
+  plan: string;
+  trial_ends_at: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  rate: string;
+  can_sell: boolean;
+}
+
+/**
+ * Vente ventilée par vendeur (§13) : brut, taux, commission et net (net + frais
+ * de livraison) figés au moment de la vente — jamais recalculés après coup.
+ */
+export interface CommissionTransaction {
+  id: string;
+  order: string;
+  order_number: string;
+  store_name: string;
+  customer_email: string;
+  seller: string;
+  plan: string;
+  gross_amount: string;
+  commission_rate: string;
+  commission_amount: string;
+  seller_amount: string;
+  is_refunded: boolean;
+  is_released: boolean;
+  created_at: string;
+  refunded_at: string | null;
+  released_at: string | null;
+}
+
+/** Réponse des endpoints `commissions/wallet/me/` et `commissions/subscription/me/` (§23). */
+export interface SellerFinanceDashboard {
+  wallet: SellerWallet;
+  subscription: SellerCommissionSubscription;
+  recent_sales: CommissionTransaction[];
+  recent_wallet_transactions: WalletTransaction[];
+}
+
+export type PayoutStatus = "pending" | "completed" | "rejected";
+
+/** Demande de retrait du vendeur (§19) — ne porte que sur le solde disponible. */
+export interface Payout {
+  id: string;
+  seller: string;
+  amount: string;
+  method: "wave" | "orange_money" | "card";
+  status: PayoutStatus;
+  reference: string;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export interface CommissionStatsByPlan {
+  plan: string;
+  count: number;
+  commissions: string;
+  volume: string;
+}
+
+/** Statistiques admin de la plateforme (§25) — endpoint `commissions/commissions/stats/`. */
+export interface CommissionStats {
+  today_commissions: string;
+  month_commissions: string;
+  total_commissions: string;
+  total_volume: string;
+  total_to_sellers: string;
+  total_refunded_commissions: string;
+  total_payouts: string;
+  platform_balance: string;
+  platform_total_subscriptions: string;
+  by_plan: CommissionStatsByPlan[];
 }

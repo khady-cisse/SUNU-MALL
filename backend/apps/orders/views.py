@@ -81,6 +81,16 @@ class OrderViewSet(viewsets.ModelViewSet):
         address = get_object_or_404(Address, pk=data["address"], user=request.user)
         delivery_fee = compute_delivery_fee(store, address, data["delivery_type"])
 
+        # Gating commission (spec §17-§18) : au-delà de la période de grâce,
+        # un vendeur sans essai ni abonnement payé actif ne reçoit plus de
+        # nouvelles commandes — ses données historiques ne sont jamais touchées.
+        from apps.commissions.services import can_receive_orders
+        if not can_receive_orders(store.owner):
+            raise ValidationError(
+                "Ce vendeur ne peut plus recevoir de nouvelles commandes "
+                "(abonnement commerçant expiré). Choisissez une autre boutique."
+            )
+
         with transaction.atomic():
             order = Order.objects.create(
                 customer=request.user,

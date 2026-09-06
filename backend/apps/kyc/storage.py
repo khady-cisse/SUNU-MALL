@@ -22,13 +22,16 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 
-def _s3_storage():
+def _s3_storage(endpoint_url=None):
     from storages.backends.s3boto3 import S3Boto3Storage
 
+    # custom_domain=None : indispensable, sinon S3Boto3Storage hérite du
+    # réglage global AWS_S3_CUSTOM_DOMAIN (bucket public sunu-mall-media) et
+    # les URLs KYC pointeraient vers le mauvais bucket.
     return S3Boto3Storage(
         access_key=settings.AWS_ACCESS_KEY_ID,
         secret_key=settings.AWS_SECRET_ACCESS_KEY,
-        endpoint_url=settings.AWS_S3_ENDPOINT_URL,
+        endpoint_url=endpoint_url or settings.AWS_S3_ENDPOINT_URL,
         region_name=getattr(settings, "AWS_S3_REGION_NAME", "us-east-1"),
         signature_version="s3v4",
         bucket_name=settings.KYC_STORAGE_BUCKET,
@@ -36,6 +39,7 @@ def _s3_storage():
         file_overwrite=False,
         querystring_auth=True,
         querystring_expire=settings.KYC_PRESIGNED_URL_TTL,
+        custom_domain=None,
     )
 
 
@@ -125,24 +129,20 @@ def signed_url(stored_name):
     """
     URL pré-signée à courte durée pour consulter une pièce.
 
-    Le point d'accès pré-signé pointe sur le endpoint configuré (interne
-    Docker). S'il existe un endpoint public (MINIO_PUBLIC_ENDPOINT), on y
-    remplace l'hôte en gardant chemin et signature.
+    La signature s3v4 embarque le Header `host` de la requête. Pour que le
+    navigateur puisse la rejouer, on signe directement contre l'endpoint
+    public (MINIO_PUBLIC_ENDPOINT) quand il est configuré — un remplacement
+    d'hôte après signature produirait un 403 SignatureDoesNotMatch.
     """
-    storage = get_kyc_storage()
+    public_endpoint = getattr(settings, "MINIO_PUBLIC_ENDPOINT", "") or ""
+    endpoint_url = settings.AWS_S3_ENDPOINT_URL
+    if public_endpoint:
+        public = public_endpoint if "//" in public_endpoint else f"//{public_endpoint}"
+        parts = urlsplit(public)
+        endpoint_url = urlunsplit((parts.scheme or "http", parts.netloc, "", "", ""))
+    storage = _s3_storage(endpoint_url=endpoint_url)
     try:
-        url = storage.url(stored_name)
+        return storage.url(stored_name)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Impossible de générer l'URL signée de %s : %s", stored_name, exc)
         return ""
-
-    public_endpoint = getattr(settings, "MINIO_PUBLIC_ENDPOINT", "") or ""
-    if not public_endpoint:
-        return url
-
-    try:
-        parts = urlsplit(url)
-        public = urlsplit(public_endpoint if "//" in public_endpoint else f"//{public_endpoint}")
-        return urlunsplit((public.scheme or parts.scheme, public.netloc, parts.path, parts.query, parts.fragment))
-    except ValueError:
-        return url

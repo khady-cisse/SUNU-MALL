@@ -113,6 +113,16 @@ class SubscriptionPlan(models.Model):
     # Sans ça, "Nombre limité / augmenté / illimité de produits" dans `features`
     # n'était que du texte marketing jamais réellement appliqué.
     max_products = models.IntegerField(null=True, blank=True)
+    # Taux de commission (en %) prélevé sur les ventes du commerçant tant que
+    # son abonnement est actif. Le taux est figé au moment de chaque vente —
+    # une vente passée garde le taux de son plan d'alors (spec commission §12).
+    # BASIC 5 %, PRO 3 %, BUSINESS 1 %.
+    commission_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    # Durée (en jours) d'une période d'abonnement achetée une seule fois
+    # (spec §5). Remplit ends_at côté serveur (jamais fourni par le client).
+    duration_days = models.IntegerField(default=30)
+    # Un plan inactif n'est plus proposé ni appliqué aux nouvelles ventes.
+    is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

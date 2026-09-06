@@ -50,7 +50,7 @@ export function Footer() {
           ))}
         </div>
         <div className="mt-10 flex flex-col items-center justify-between gap-4 border-t border-white/10 pt-6 text-xs text-white/40 md:flex-row">
-          <p>© 2026 SUNU MALL — Made in Dakar 🇸🇳</p>
+          <p>© 2026 SUNU MALL — NEJ digital</p>
           <div className="flex items-center gap-4">
             {["Mentions légales", "Politique de confidentialité", "Conditions d'utilisation"].map((t) => (
               <span key={t} className="cursor-pointer transition-colors hover:text-white">

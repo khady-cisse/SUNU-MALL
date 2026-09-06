@@ -23,6 +23,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useRecentlyViewedStore } from "@/store/recentlyViewedStore";
 import { useAuthStore } from "@/store/authStore";
+import { roleHomePath } from "@/lib/roles";
 import type { Product } from "@/types";
 
 const WHY_ITEMS = [
@@ -33,11 +34,9 @@ const WHY_ITEMS = [
   { icon: Zap, title: "Satisfait ou remboursé", desc: "Politique de retour" },
 ];
 
-const SPACES = [
-  { icon: ShoppingBag, title: "Client", desc: "Panier multi-boutiques, paiement Wave/OM/CB, suivi GPS.", path: "/home", bg: "bg-orange/10", ic: "text-orange" },
-  { icon: Store, title: "Commerçant", desc: "Gestion catalogue, livreurs affiliés, analytics.", path: "/register-merchant", bg: "bg-blue-50", ic: "text-blue-600" },
-  { icon: Bike, title: "Livreur", desc: "Courses assignées, itinéraire, preuve de livraison.", path: "/driver-login", bg: "bg-green-50", ic: "text-green-600" },
-];
+const CLIENT_ICON = ShoppingBag;
+const MERCHANT_ICON = Store;
+const DRIVER_ICON = Bike;
 
 export default function HomePage() {
   const {
@@ -51,6 +50,33 @@ export default function HomePage() {
   const { data: bestSellers, loading: loadingBestSellers } = useAsync(() => catalogApi.listBestSellers(), []);
 
   const user = useAuthStore((s) => s.user);
+  const spaces = [
+    {
+      icon: CLIENT_ICON,
+      title: "Client",
+      desc: "Mes commandes, suivi GPS, retours.",
+      path: user ? (user.roles.includes("client") ? "/orders" : roleHomePath(user.roles)) : "/register-client",
+      bg: "bg-orange/10",
+      ic: "text-orange",
+    },
+    {
+      icon: MERCHANT_ICON,
+      title: "Commerçant",
+      desc: "Gestion catalogue, livreurs affiliés, analytics.",
+      path: user ? (user.roles.includes("merchant") ? "/merchant" : roleHomePath(user.roles)) : "/register-merchant",
+      bg: "bg-blue-50",
+      ic: "text-blue-600",
+    },
+    {
+      icon: DRIVER_ICON,
+      title: "Livreur",
+      desc: "Courses assignées, itinéraire, preuve de livraison.",
+      path: user ? (user.roles.includes("driver") ? "/driver-dashboard" : roleHomePath(user.roles)) : "/driver-login",
+      bg: "bg-green-50",
+      ic: "text-green-600",
+    },
+  ];
+
   const { data: recommendations, loading: loadingRecommendations } = useAsync(
     () => (user ? iaApi.getPersonalizedRecommendations() : Promise.resolve([])),
     [user?.id],
@@ -246,7 +272,7 @@ export default function HomePage() {
           <h2 className="mt-2 font-display text-2xl font-bold text-gray-800">Un espace pour chacun</h2>
         </div>
         <div className="mx-auto grid max-w-5xl gap-4 md:grid-cols-3">
-          {SPACES.map((r) => (
+          {spaces.map((r) => (
             <Link
               key={r.title}
               to={r.path}

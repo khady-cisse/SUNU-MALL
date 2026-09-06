@@ -69,13 +69,28 @@ class Payment(models.Model):
         ]
 
     def mark_succeeded(self):
+        """Marque le paiement réussi et déclenche enfin le traitement métier.
+
+        Idempotent : un second appel (webhook rejoué, sandbox-confirm
+        rappelée) ne ré-exécute rien — la commission d'une commande n'est
+        donc jamais créditée deux fois (spec commission §27-§28).
+        """
+        if self.status == self.Status.SUCCESS:
+            return
         self.status = self.Status.SUCCESS
         self.paid_at = timezone.now()
         self.save()
         if self.subscription_id:
             self._activate_subscription()
+            from apps.commissions.services import (
+                register_subscription_revenue, sync_plan_from_subscription,
+            )
+            sync_plan_from_subscription(self.subscription)
+            register_subscription_revenue(self.subscription, self.amount)
         else:
             Transaction.create_for_payment(self)
+            from apps.commissions.services import settle_commission_for_order
+            settle_commission_for_order(self.order)
 
     def _activate_subscription(self):
         subscription = self.subscription
@@ -187,6 +202,10 @@ class Refund(models.Model):
                 payee_type=original.payee_type, payee_id=original.payee_id,
                 amount=-original.amount,
             )
+
+        # Commission : contre-passe la vente (fonds vendeur + commission plateforme).
+        from apps.commissions.services import reverse_commission_for_refund
+        reverse_commission_for_refund(self)
 
         self._notify_customer()
 

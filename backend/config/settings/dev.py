@@ -4,6 +4,19 @@ from .base import *  # noqa: F401,F403
 DEBUG = True
 ALLOWED_HOSTS = ["*"]
 
+# Origines locales autorisées pour la vérification CSRF (admin Django et
+# POST /api/ depuis le SPA). Sans cela, Django refuse les POST dont l'en-tête
+# Origin ne correspond pas à un Host "de confiance" (ex: 403 sur l'admin
+# depuis http://localhost:8081).
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:8080",
+    "http://localhost:8081",
+    "http://localhost:3010",
+    "http://localhost:3004",
+    "http://127.0.0.1:8080",
+    "http://127.0.0.1:8081",
+]
+
 # Désactiver le throttle de connexion en dev et dans les tests : il s'applique
 # en prod (config/settings/base.py). On ne repose pas sur DEBUG car Django
 # force DEBUG=False pendant `manage.py test`.

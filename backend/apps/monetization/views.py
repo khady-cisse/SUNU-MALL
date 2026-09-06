@@ -42,7 +42,7 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class SubscriptionPlanViewSet(viewsets.ModelViewSet):
-    """Offres Standard/Premium/Premium+ : lecture publique, gestion réservée à l'admin."""
+    """Offres BASIC/PRO/BUSINESS : lecture publique des plans actifs, gestion réservée à l'admin."""
     queryset = SubscriptionPlan.objects.all()
     serializer_class = SubscriptionPlanSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
@@ -51,6 +51,14 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
         if self.action in ["create", "update", "partial_update", "destroy"]:
             return [permissions.IsAuthenticated(), IsAdmin()]
         return super().get_permissions()
+
+    def get_queryset(self):
+        # Un plan désactivé (is_active=False) n'est plus proposé (spec §16) :
+        # seuls l'admin et le Swagger le voient encore.
+        user = self.request.user
+        if user is not None and user.is_authenticated and user.has_role(Role.RoleName.ADMIN):
+            return self.queryset
+        return self.queryset.filter(is_active=True)
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
     def subscribe(self, request, pk=None):
@@ -67,6 +75,8 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
         from apps.payments.serializers import PaymentSerializer
 
         plan = self.get_object()
+        if not plan.is_active:
+            raise PermissionDenied("Cette offre n'est plus disponible.")
         user = request.user
         if not user.has_role(Role.RoleName.MERCHANT):
             raise PermissionDenied("Réservé aux comptes commerçants.")
@@ -80,7 +90,7 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
             )
 
         today = timezone.now().date()
-        days = BILLING_CYCLE_DAYS.get(plan.billing_cycle, 30)
+        days = plan.duration_days or BILLING_CYCLE_DAYS.get(plan.billing_cycle, 30)
         subscription = Subscription.objects.create(
             plan=plan, subscriber_type="merchant", subscriber_id=user.id,
             starts_at=today, ends_at=today + timedelta(days=days),
@@ -89,6 +99,8 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
         if plan.price <= 0:
             subscription.status = Subscription.Status.ACTIVE
             subscription.save(update_fields=["status"])
+            from apps.commissions.services import sync_plan_from_subscription
+            sync_plan_from_subscription(subscription)
             return Response(
                 {"subscription": SubscriptionSerializer(subscription).data, "payment": None},
                 status=status.HTTP_201_CREATED,
@@ -134,6 +146,11 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
     def cancel(self, request, pk=None):
         subscription = self.get_object()
         subscription.cancel()
+        # Répercute l'annulation sur l'entitlement commission du vendeur
+        # (spec §16-§18) : au-delà de la période de grâce il ne reçoit plus
+        # de nouvelles commandes. Sans ça, un plan annulé restait appliqué.
+        from apps.commissions.services import sync_plan_from_subscription
+        sync_plan_from_subscription(subscription)
         return Response(self.get_serializer(subscription).data, status=status.HTTP_200_OK)
 
 

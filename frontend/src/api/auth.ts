@@ -19,7 +19,7 @@ export function register(payload: {
   last_name: string;
   phone: string;
   role_name?: "client" | "merchant" | "driver";
-}) {
+} | FormData) {
   return apiPost<AuthResponse>("/auth/register/", payload, { auth: false });
 }
 

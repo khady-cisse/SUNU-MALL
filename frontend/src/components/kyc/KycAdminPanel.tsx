@@ -69,6 +69,58 @@ function shortId(id: string) {
   return id.length > 10 ? `${id.slice(0, 8)}…` : id;
 }
 
+/** Un PDF ne se rend pas dans une balise <img> : on l'affiche comme document. */
+function isPdfUrl(url: string) {
+  return url.toLowerCase().split("?")[0].endsWith(".pdf");
+}
+
+function DocumentThumb({ url, alt }: { url: string; alt: string }) {
+  if (isPdfUrl(url)) {
+    return (
+      <a href={url} target="_blank" rel="noreferrer" title={`${alt} (PDF)`}>
+        <span className="grid h-10 w-14 place-items-center rounded-md border border-border bg-muted text-orange">
+          <FileText className="h-5 w-5" />
+        </span>
+      </a>
+    );
+  }
+  return (
+    <a href={url} target="_blank" rel="noreferrer" title={alt}>
+      <img src={url} alt={alt} className="h-10 w-14 rounded-md border border-border object-cover" />
+    </a>
+  );
+}
+
+function DocumentPreview({ url, label }: { url: string | null; label: string }) {
+  if (!url) {
+    return (
+      <p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+        {label} non fourni
+      </p>
+    );
+  }
+  if (isPdfUrl(url)) {
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        className="flex flex-col items-center justify-center gap-2 rounded-lg border border-border bg-muted p-6 text-center transition-colors hover:border-orange/50 hover:bg-orange/5"
+      >
+        <FileText className="h-9 w-9 text-orange" />
+        <p className="text-sm font-semibold text-ink">Voir la pièce ({label})</p>
+        <p className="text-xs text-muted-foreground">Document PDF — s&apos;ouvre dans un nouvel onglet</p>
+      </a>
+    );
+  }
+  return (
+    <a href={url} target="_blank" rel="noreferrer" className="block">
+      <img src={url} alt={label} className="w-full rounded-lg border border-border object-cover" />
+      <p className="mt-1 text-center text-xs text-muted-foreground">{label}</p>
+    </a>
+  );
+}
+
 export function KycAdminPanel({ kind }: Props) {
   const cfg = KINDS[kind];
   const [page, setPage] = useState(1);
@@ -172,22 +224,10 @@ export function KycAdminPanel({ kind }: Props) {
                       {(doc.document_front_url || doc.document_back_url) && (
                         <div className="flex gap-1.5">
                           {doc.document_front_url && (
-                            <a href={doc.document_front_url} target="_blank" rel="noreferrer" title="Voir le recto">
-                              <img
-                                src={doc.document_front_url}
-                                alt="Recto de la pièce"
-                                className="h-10 w-14 rounded-md border border-border object-cover"
-                              />
-                            </a>
+                            <DocumentThumb url={doc.document_front_url} alt="Recto de la pièce" />
                           )}
                           {doc.document_back_url && (
-                            <a href={doc.document_back_url} target="_blank" rel="noreferrer" title="Voir le verso">
-                              <img
-                                src={doc.document_back_url}
-                                alt="Verso de la pièce"
-                                className="h-10 w-14 rounded-md border border-border object-cover"
-                              />
-                            </a>
+                            <DocumentThumb url={doc.document_back_url} alt="Verso de la pièce" />
                           )}
                         </div>
                       )}
@@ -309,22 +349,8 @@ function KycDetail({ doc, kind }: { doc: KycDoc; kind: Kind }) {
       <div>
         <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">Pièces fournies</p>
         <div className="grid gap-3 sm:grid-cols-2">
-          {doc.document_front_url ? (
-            <a href={doc.document_front_url} target="_blank" rel="noreferrer" className="block">
-              <img src={doc.document_front_url} alt="Recto de la pièce d'identité" className="w-full rounded-lg border border-border object-cover" />
-              <p className="mt-1 text-center text-xs text-muted-foreground">Recto</p>
-            </a>
-          ) : (
-            <p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Recto non fourni</p>
-          )}
-          {doc.document_back_url ? (
-            <a href={doc.document_back_url} target="_blank" rel="noreferrer" className="block">
-              <img src={doc.document_back_url} alt="Verso de la pièce d'identité" className="w-full rounded-lg border border-border object-cover" />
-              <p className="mt-1 text-center text-xs text-muted-foreground">Verso</p>
-            </a>
-          ) : (
-            <p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Verso non fourni</p>
-          )}
+          <DocumentPreview url={doc.document_front_url ?? null} label="Recto" />
+          <DocumentPreview url={doc.document_back_url ?? null} label="Verso" />
         </div>
         {doc.status === "REJECTED" && doc.rejection_reason && (
           <p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-danger">Motif du rejet : {doc.rejection_reason}</p>
