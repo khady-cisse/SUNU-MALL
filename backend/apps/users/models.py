@@ -22,6 +22,9 @@ class User(AbstractUser):
     last_name = models.CharField(max_length=150, blank=True)
     is_active = models.BooleanField(default=True)
     is_verified = models.BooleanField(default=False)
+    # Comptes créés par un admin (livreurs) : le mot de passe initial est
+    # provisoire, l'utilisateur doit le changer dès sa première connexion.
+    must_change_password = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

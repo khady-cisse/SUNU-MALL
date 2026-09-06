@@ -183,3 +183,15 @@ class GuestCheckoutSerializer(serializers.Serializer):
 class SetPasswordSerializer(serializers.Serializer):
     """Transforme un compte invité (sans mot de passe) en compte complet."""
     password = serializers.CharField(write_only=True, min_length=8)
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    """Changement de mot de passe (ancien + confirmation)."""
+    current_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        if attrs["new_password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError("La confirmation ne correspond pas au nouveau mot de passe.")
+        return attrs

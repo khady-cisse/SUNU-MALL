@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ChevronRight, Clock, Package, ShoppingBag, Store as StoreIcon, TriangleAlert, Wallet } from "lucide-react";
 import { useAsync } from "@/hooks/useAsync";
@@ -11,6 +11,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { KycStatusCard } from "@/components/kyc/KycStatusCard";
 import { formatDate, formatPrice } from "@/lib/utils";
+import type { Driver } from "@/types";
 
 const STATUS_VARIANT: Record<string, "default" | "success" | "warning" | "danger"> = {
   delivered: "success",
@@ -24,8 +25,34 @@ const STATUS_VARIANT: Record<string, "default" | "success" | "warning" | "danger
 export default function MerchantDashboardPage() {
   const { data: own, loading: loadingStores } = useAsync(() => catalogApi.listMyStores(), []);
   const { data: orders, loading: loadingOrders, refetch: refetchOrders } = useAsync(() => ordersApi.listOrders(), []);
-  const { data: drivers } = useAsync(() => ordersApi.listAvailableDrivers(), []);
   const [assigningDeliveryId, setAssigningDeliveryId] = useState<string | null>(null);
+
+  // Livreurs proposés par boutique (affectation = proximité de la boutique).
+  const orderList = useMemo(() => orders ?? [], [orders]);
+  const pendingStoreIds = useMemo(
+    () => [...new Set(orderList.filter((o) => o.delivery?.status === "pending").map((o) => o.store))],
+    [orderList],
+  );
+  const [driversByStore, setDriversByStore] = useState<Record<string, Driver[]>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const entries: Record<string, Driver[]> = {};
+      for (const storeId of pendingStoreIds) {
+        try {
+          entries[storeId] = await ordersApi.listAvailableDrivers(storeId);
+        } catch {
+          entries[storeId] = [];
+        }
+      }
+      if (!cancelled) setDriversByStore(entries);
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingStoreIds]);
 
   if (loadingStores || loadingOrders) return <Spinner label="Chargement du tableau de bord…" />;
   if (!own) return null;
@@ -142,9 +169,10 @@ export default function MerchantDashboardPage() {
                     <option value="" disabled>
                       Affecter un livreur…
                     </option>
-                    {drivers?.map((driver) => (
+                    {driversByStore[order.store]?.map((driver) => (
                       <option key={driver.id} value={driver.id}>
                         {driver.full_name}
+                        {driver.distance_km != null ? ` — ${driver.distance_km.toFixed(1)} km` : ""}
                       </option>
                     ))}
                   </select>

@@ -78,7 +78,10 @@ class CommissionTransactionViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(seller_id=seller)
         plan = params.get("plan")
         if plan:
-            qs = qs.filter(plan=plan)
+            # Les ventes réalisées pendant l'essai gratuite sont stockées avec
+            # un plan vide ("" — voir models.SellerSubscription.resolve_rate) :
+            # le filtre admin « Essai (trial) » les cible explicitement.
+            qs = qs.filter(plan="" if plan == "trial" else plan)
         date_from = params.get("date_from")
         if date_from:
             qs = qs.filter(created_at__date__gte=date_from)

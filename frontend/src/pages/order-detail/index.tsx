@@ -42,7 +42,10 @@ export default function OrderDetailPage() {
     () => (orderId ? ordersApi.getOrder(orderId) : Promise.resolve(null)),
     [orderId],
   );
-  const { data: drivers } = useAsync(() => ordersApi.listAvailableDrivers(), []);
+  const { data: drivers } = useAsync(
+    () => (order?.store ? ordersApi.listAvailableDrivers(order.store) : Promise.resolve([])),
+    [order?.store],
+  );
   const [assigning, setAssigning] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -193,6 +196,7 @@ export default function OrderDetailPage() {
                 {drivers?.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.full_name}
+                    {d.distance_km != null ? ` — ${d.distance_km.toFixed(1)} km` : ""}
                   </option>
                 ))}
               </select>

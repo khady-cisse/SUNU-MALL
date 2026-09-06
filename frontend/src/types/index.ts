@@ -18,6 +18,8 @@ export interface AuthUser {
   is_verified: boolean;
   /** false pour un compte invité (créé via guest-checkout, sans mot de passe défini). */
   has_password: boolean;
+  /** true pour un compte créé par un admin (livreur) : mot de passe initial à changer. */
+  must_change_password?: boolean;
 }
 
 export interface Category {
@@ -169,9 +171,13 @@ export interface Driver {
   user: string;
   full_name: string;
   phone: string;
+  email?: string;
   zone: number | null;
   vehicle_type: string;
   availability_status: DriverAvailability;
+  last_position: { latitude: string; longitude: string } | null;
+  position_updated_at: string | null;
+  distance_km: number | null;
   created_at: string;
   updated_at: string;
 }

@@ -35,6 +35,14 @@ export function setPassword(password: string) {
   return apiPost<{ message: string }>("/auth/set-password/", { password });
 }
 
+export function changePassword(payload: {
+  current_password: string;
+  new_password: string;
+  confirm_password: string;
+}) {
+  return apiPost<{ message: string }>("/auth/change-password/", payload);
+}
+
 export function verifyEmail(uid: string, token: string) {
   return apiGet<{ message: string }>(
     `/auth/verify-email/?uid=${encodeURIComponent(uid)}&token=${encodeURIComponent(token)}`,

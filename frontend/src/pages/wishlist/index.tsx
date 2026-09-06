@@ -14,12 +14,11 @@ import { formatPrice } from "@/lib/utils";
 export default function WishlistPage() {
   const user = useAuthStore((s) => s.user);
   const { data: wishlist, loading, error, refetch } = useAsync(() => shoppingApi.getWishlist(), []);
-  const fetchWishlist = useWishlistStore((s) => s.fetchWishlist);
+  const toggleItem = useWishlistStore((s) => s.toggleItem);
 
   async function remove(productId: string) {
-    await shoppingApi.removeWishlistItem(productId);
+    await toggleItem(productId);
     refetch();
-    fetchWishlist();
   }
 
   if (!user) {

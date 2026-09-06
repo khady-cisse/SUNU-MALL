@@ -83,7 +83,7 @@ function CommissionsTable() {
           <option value="BASIC">Basic</option>
           <option value="PRO">Pro</option>
           <option value="BUSINESS">Business</option>
-          <option value="">Essai (trial)</option>
+          <option value="trial">Essai (trial)</option>
         </select>
       </div>
 

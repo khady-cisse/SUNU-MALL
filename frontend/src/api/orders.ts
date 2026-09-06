@@ -50,9 +50,25 @@ export async function getDeliveryQuote(payload: {
   return parseFloat(data.delivery_fee);
 }
 
-export async function listAvailableDrivers() {
-  const data = await apiGet<Paginated<Driver>>("/orders/drivers/");
-  return data.results;
+export async function listAvailableDrivers(storeId?: string) {
+  const data = await apiGet<Paginated<Driver> | Driver[]>(
+    `/orders/drivers/${storeId ? `?store=${storeId}` : ""}`,
+  );
+  return Array.isArray(data) ? data : data.results;
+}
+
+export async function registerDriver(payload: {
+  email: string;
+  first_name: string;
+  last_name: string;
+  phone: string;
+  vehicle_type: string;
+}) {
+  return apiPost<Driver & { temporary_password: string }>("/orders/drivers/register/", payload);
+}
+
+export function updateMyDriverPosition(latitude: number | string, longitude: number | string) {
+  return apiPost<Driver>("/orders/drivers/me/position/", { latitude, longitude });
 }
 
 export function getMyDriverProfile() {
@@ -77,7 +93,17 @@ export function assignDriver(deliveryId: string, driverId: string) {
 }
 
 export function updateDeliveryStatus(deliveryId: string, status: DeliveryStatus) {
-  return apiPost<Delivery>(`/orders/deliveries/${deliveryId}/status/`, { status });
+  return apiPost<Delivery & { confirmation_code?: string }>(`/orders/deliveries/${deliveryId}/status/`, { status });
+}
+
+/** Le client (ou l'admin) valide la réception avec le code OTP remis par le livreur. */
+export function confirmDelivery(deliveryId: string, code: string) {
+  return apiPost<Delivery>(`/orders/deliveries/${deliveryId}/confirm/`, { code });
+}
+
+/** Le livreur affecté (ou l'admin) régénère le code de confirmation (perdu/expiré). */
+export function regenerateDeliveryOtp(deliveryId: string) {
+  return apiPost<Delivery & { confirmation_code: string }>(`/orders/deliveries/${deliveryId}/regenerate-otp/`);
 }
 
 export function shareDeliveryPosition(deliveryId: string, latitude: number, longitude: number) {

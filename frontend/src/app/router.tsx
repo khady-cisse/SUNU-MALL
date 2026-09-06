@@ -26,6 +26,9 @@ import WishlistPage from "@/pages/wishlist";
 import RecentlyViewedPage from "@/pages/recently-viewed";
 import NotificationsPage from "@/pages/notifications";
 import ContactPage from "@/pages/contact";
+import MentionsLegalesPage from "@/pages/legal/mentions-legales";
+import PolitiqueConfidentialitePage from "@/pages/legal/politique-confidentialite";
+import ConditionsUtilisationPage from "@/pages/legal/conditions-utilisation";
 
 import CartPage from "@/pages/cart";
 import CheckoutAddressPage from "@/pages/checkout-address";
@@ -51,6 +54,7 @@ import SellerPayoutsPage from "@/pages/seller-payouts";
 import DriverDashboardPage from "@/pages/driver-dashboard";
 import DriverDeliveryPage from "@/pages/driver-delivery";
 import DriverProfilePage from "@/pages/driver-profile";
+import DriverPasswordChangePage from "@/pages/driver-password-change";
 
 import AdminDashboardPage from "@/pages/admin";
 import AdminUsersPage from "@/pages/admin-users";
@@ -61,6 +65,7 @@ import AdminPaymentsPage from "@/pages/admin-payments";
 import AdminKycSellersPage from "@/pages/admin-kyc-sellers";
 import AdminKycDriversPage from "@/pages/admin-kyc-drivers";
 import AdminFinancePage from "@/pages/admin-finance";
+import AdminDriversPage from "@/pages/admin-drivers";
 
 export const router = createBrowserRouter([
   {
@@ -94,6 +99,9 @@ export const router = createBrowserRouter([
       { path: "/recently-viewed", element: <RecentlyViewedPage /> },
       { path: "/notifications", element: <NotificationsPage /> },
       { path: "/contact", element: <ContactPage /> },
+      { path: "/mentions-legales", element: <MentionsLegalesPage /> },
+      { path: "/politique-de-confidentialite", element: <PolitiqueConfidentialitePage /> },
+      { path: "/conditions-utilisation", element: <ConditionsUtilisationPage /> },
     ],
   },
 
@@ -135,6 +143,7 @@ export const router = createBrowserRouter([
       { path: "/driver-dashboard", element: <DriverDashboardPage /> },
       { path: "/driver-delivery", element: <DriverDeliveryPage /> },
       { path: "/driver-profile", element: <DriverProfilePage /> },
+      { path: "/driver-password-change", element: <DriverPasswordChangePage /> },
       { path: "/driver-notifications", element: <NotificationsPage /> },
     ],
   },
@@ -150,6 +159,7 @@ export const router = createBrowserRouter([
       { path: "/admin-payments", element: <AdminPaymentsPage /> },
       { path: "/admin-kyc-sellers", element: <AdminKycSellersPage /> },
       { path: "/admin-kyc-drivers", element: <AdminKycDriversPage /> },
+      { path: "/admin-drivers", element: <AdminDriversPage /> },
       { path: "/admin-finance", element: <AdminFinancePage /> },
       { path: "/admin-order-detail", element: <OrderDetailPage /> },
       { path: "/admin-notifications", element: <NotificationsPage /> },

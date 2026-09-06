@@ -19,14 +19,31 @@ class DeliveryZoneSerializer(serializers.ModelSerializer):
 class DriverSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(source="user.get_full_name", read_only=True)
     phone = serializers.CharField(source="user.phone", read_only=True)
+    email = serializers.CharField(source="user.email", read_only=True)
+    last_position = serializers.SerializerMethodField()
+    position_updated_at = serializers.DateTimeField(read_only=True)
+    distance_km = serializers.SerializerMethodField()
 
     class Meta:
         model = Driver
         fields = [
-            "id", "user", "full_name", "phone", "zone", "vehicle_type",
-            "availability_status", "created_at", "updated_at",
+            "id", "user", "full_name", "phone", "email", "zone", "vehicle_type",
+            "availability_status", "last_position", "position_updated_at",
+            "distance_km", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
+
+    def get_last_position(self, obj):
+        if obj.last_latitude is None or obj.last_longitude is None:
+            return None
+        return {"latitude": obj.last_latitude, "longitude": obj.last_longitude}
+
+    def get_distance_km(self, obj):
+        store = self.context.get("store")
+        if store is None:
+            return None
+        distance = obj.distance_to_store_km(store)
+        return round(distance, 2) if distance is not None else None
 
 
 class DeliveryTrackingSerializer(serializers.ModelSerializer):

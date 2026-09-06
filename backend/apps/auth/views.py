@@ -16,7 +16,7 @@ from django.utils.encoding import force_str
 from django.core.exceptions import ValidationError
 from .serializers import (
     RegisterSerializer, LoginSerializer, ResendVerificationSerializer,
-    GuestCheckoutSerializer, SetPasswordSerializer,
+    GuestCheckoutSerializer, SetPasswordSerializer, ChangePasswordSerializer,
 )
 from .utils import email_verification_token, send_verification_email
 from apps.users.models import User
@@ -114,6 +114,7 @@ class RegisterView(generics.CreateAPIView):
                 "roles": roles,
                 "is_verified": user.is_verified,
                 "has_password": True,
+                "must_change_password": user.must_change_password,
             },
             "access": None,
             "refresh": None,
@@ -158,6 +159,7 @@ class LoginView(generics.GenericAPIView):
                 "roles": roles,
                 "is_verified": user.is_verified,
                 "has_password": True,
+                "must_change_password": user.must_change_password,
             },
             "access": str(refresh.access_token),
             "refresh": str(refresh)
@@ -292,3 +294,29 @@ class SetPasswordView(generics.GenericAPIView):
         return Response({
             "message": "Mot de passe défini. Vérifiez votre email pour activer toutes les fonctionnalités.",
         })
+
+
+class ChangePasswordView(generics.GenericAPIView):
+    """Change le mot de passe de l'utilisateur connecté (ancien + nouveau).
+
+    Pour les comptes créés par un administrateur (livreurs), le premier
+    changement de mot de passe lève aussi l'obligation `must_change_password`,
+    ce qui débloque l'accès complet à l'espace livreur.
+    """
+    serializer_class = ChangePasswordSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = request.user
+        if not user.check_password(serializer.validated_data['current_password']):
+            return Response(
+                {"error": "Mot de passe actuel incorrect."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        user.set_password(serializer.validated_data['new_password'])
+        if user.must_change_password:
+            user.must_change_password = False
+        user.save()
+        return Response({"message": "Mot de passe modifié avec succès."})

@@ -37,7 +37,10 @@ export default function LoginPage() {
     try {
       const data = await authApi.login(values.email, values.password);
       loginSuccess(data);
-      const next = searchParams.get("next");
+      // `next` est une valeur non fiable (variable d'environnement du client) :
+      // on refuse toute redirection hors-site (protocole externe ou URL absolue).
+      const rawNext = searchParams.get("next");
+      const next = rawNext?.startsWith("/") ? rawNext : null;
       navigate(next || roleHomePath(data.user.roles), { replace: true });
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {

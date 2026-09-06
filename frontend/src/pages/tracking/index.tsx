@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { CheckCircle2, Clock, MapPin, PackageCheck, PackageSearch, Truck, XCircle } from "lucide-react";
 import { useAsync } from "@/hooks/useAsync";
 import * as ordersApi from "@/api/orders";
@@ -181,6 +181,21 @@ export default function TrackingPage() {
               <p className="text-sm font-medium text-ink">{order.delivery.driver_detail.full_name}</p>
               <p className="text-xs text-muted-foreground">{order.delivery.driver_detail.phone}</p>
             </div>
+          </div>
+        )}
+        {deliveryStatus === "picked_up" && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-accent bg-muted/40 p-3">
+            <p className="text-sm text-ink">
+              <strong>Votre colis est arrivé.</strong> Le livreur vous remet un code de confirmation : validez la réception pour
+              finaliser votre commande.
+            </p>
+            <Link
+              to={`/delivery-confirm?order=${order.id}`}
+              className="btn-orange focus-ring inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold"
+            >
+              <PackageCheck className="h-4 w-4" />
+              Confirmer la réception
+            </Link>
           </div>
         )}
         {(lastPosition || (order.address_detail?.latitude != null && order.address_detail?.longitude != null)) && (

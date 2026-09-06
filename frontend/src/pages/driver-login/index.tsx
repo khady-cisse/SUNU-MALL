@@ -37,7 +37,10 @@ export default function DriverLoginPage() {
         return;
       }
       loginSuccess(data);
-      navigate("/driver-dashboard", { replace: true });
+      navigate(
+        data.user.must_change_password ? "/driver-password-change" : "/driver-dashboard",
+        { replace: true },
+      );
     } catch (err) {
       setServerError(err instanceof ApiError ? "Identifiants incorrects." : "Impossible de contacter le serveur.");
     }

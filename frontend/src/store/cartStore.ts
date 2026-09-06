@@ -5,6 +5,7 @@ interface CartState {
   cartCount: number;
   fetchCart: () => void;
   addItem: (productVariant: string, quantity?: number) => Promise<void>;
+  updateItem: (itemId: string, quantity: number) => Promise<void>;
   removeItem: (itemId: string) => Promise<void>;
   reset: () => void;
 }
@@ -30,6 +31,11 @@ export const useCartStore = create<CartState>()((set) => ({
 
   removeItem: async (itemId) => {
     const cart = await shoppingApi.removeCartItem(itemId);
+    set({ cartCount: computeCount(cart.items) });
+  },
+
+  updateItem: async (itemId, quantity) => {
+    const cart = await shoppingApi.updateCartItem(itemId, quantity);
     set({ cartCount: computeCount(cart.items) });
   },
 

@@ -1,9 +1,13 @@
 """
 Commandes et livraison.
 """
+import hashlib
+import secrets
 import uuid
+from datetime import timedelta
 from decimal import Decimal
 
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
@@ -81,11 +85,37 @@ class Driver(models.Model):
     zone = models.ForeignKey(DeliveryZone, on_delete=models.SET_NULL, null=True, related_name='drivers')
     vehicle_type = models.CharField(max_length=100)
     availability_status = models.CharField(max_length=50, choices=AvailabilityStatus.choices, default=AvailabilityStatus.OFFLINE)
+    # Position "libre" du livreur (hors course) : communiquée quand il se rend
+    # disponible, elle sert à vérifier qu'il est proche de la boutique avant
+    # de lui affecter une course (affectation = proximité géographique).
+    last_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    last_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    position_updated_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        ordering = ['-created_at']
+
     def is_available(self):
         return self.availability_status == self.AvailabilityStatus.AVAILABLE
+
+    def position(self):
+        """Coordonnées libres (lat, lng) du livreur, ou None sans position."""
+        if self.last_latitude is not None and self.last_longitude is not None:
+            return (self.last_latitude, self.last_longitude)
+        return None
+
+    def distance_to_store_km(self, store):
+        """Distance à vol d'oiseau (km) entre le livreur et une boutique.
+
+        None si le livreur n'a pas de position libre, ou si la boutique n'a
+        pas de coordonnées GPS.
+        """
+        pos = self.position()
+        if pos is None or store.latitude is None or store.longitude is None:
+            return None
+        return haversine_km(pos[0], pos[1], store.latitude, store.longitude)
 
     def current_position(self):
         """Dernière position GPS connue du livreur (toutes courses confondues).
@@ -126,6 +156,9 @@ class Delivery(models.Model):
     status = models.CharField(max_length=50, choices=Status.choices, default=Status.PENDING)
     picked_up_at = models.DateTimeField(null=True, blank=True)
     delivered_at = models.DateTimeField(null=True, blank=True)
+    confirmation_otp_hash = models.CharField(max_length=64, blank=True, default="")
+    confirmation_otp_expires_at = models.DateTimeField(null=True, blank=True)
+    confirmation_attempts = models.PositiveSmallIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -186,6 +219,45 @@ class Delivery(models.Model):
         self.status = self.Status.DELIVERED
         self.delivered_at = timezone.now()
         self.save()
+
+    def generate_confirmation_otp(self):
+        """Génère un code de confirmation à 6 chiffres pour la remise au client.
+
+        Le code en clair n'est stocké nulle part (seul son hash SHA-256 est
+        conservé) ; il n'est rendu qu'une seule fois à l'appelant (le livreur
+        qui fait progresser la course, ou l'action `regenerate-otp`). Valide
+        30 minutes et limité à `MAX_OTP_ATTEMPTS` essais de saisie.
+        """
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        self.confirmation_otp_hash = hashlib.sha256(code.encode()).hexdigest()
+        self.confirmation_otp_expires_at = timezone.now() + timedelta(
+            minutes=int(settings.CONFIRMATION_OTP_TTL_MINUTES)
+        )
+        self.confirmation_attempts = 0
+        self.save(update_fields=["confirmation_otp_hash", "confirmation_otp_expires_at", "confirmation_attempts"])
+        return code
+
+    def validate_confirmation_otp(self, code):
+        """Vérifie le code saisi par le client contre le hash stocké.
+
+        Incrémente le compteur d'essais en cas d'échec ; un code expiré ou
+        un épuisement des essais invalide définitivement ce code (le livreur
+        devra en générer un nouveau).
+        """
+        if (
+            not code
+            or not self.confirmation_otp_hash
+            or not self.confirmation_otp_expires_at
+            or self.confirmation_attempts >= settings.MAX_OTP_ATTEMPTS
+            or timezone.now() > self.confirmation_otp_expires_at
+        ):
+            return False
+        candidate = hashlib.sha256(str(code).strip().encode()).hexdigest()
+        if not secrets.compare_digest(candidate, self.confirmation_otp_hash):
+            self.confirmation_attempts = self.confirmation_attempts + 1
+            self.save(update_fields=["confirmation_attempts"])
+            return False
+        return True
 
     def eta_seconds(self):
         """Temps de trajet estimé (livreur -> adresse du client), en secondes.

@@ -34,13 +34,28 @@ export default function DriverProfilePage() {
     setSaving(true);
     setFeedback(null);
     try {
+      if (availability === "available") {
+        const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+          if (!("geolocation" in navigator)) {
+            reject(new Error("GPS non disponible"));
+            return;
+          }
+          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 });
+        });
+        await ordersApi.updateMyDriverPosition(pos.coords.latitude, pos.coords.longitude);
+      }
       await ordersApi.updateMyDriverProfile({ vehicle_type: vehicleType, availability_status: availability });
       setFeedback({ type: "success", text: "Profil mis à jour." });
       refetch();
     } catch (err) {
       setFeedback({
         type: "error",
-        text: err instanceof ApiError ? "Impossible d'enregistrer." : "Impossible de contacter le serveur.",
+        text:
+          availability === "available" && err instanceof Error && err.message === "GPS non disponible"
+            ? "Activez la géolocalisation : votre position GPS est requise pour être disponible à proximité des boutiques."
+            : err instanceof ApiError
+              ? "Impossible d'enregistrer."
+              : "Impossible de contacter le serveur.",
       });
     } finally {
       setSaving(false);

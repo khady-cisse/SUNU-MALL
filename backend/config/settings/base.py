@@ -157,6 +157,17 @@ COMMISSION_GRACE_DAYS = config("COMMISSION_GRACE_DAYS", default=7, cast=int)
 # Délai de libération des fonds d'une vente livrée (pending → available, §9).
 COMMISSION_RELEASE_DAYS = config("COMMISSION_RELEASE_DAYS", default=3, cast=int)
 
+# --- Confirmation de livraison par code OTP ---
+# Le client valide la réception d'une commande avec un code à 6 chiffres
+# que le livreur lui remet physiquement. Validité courte et essais limités.
+CONFIRMATION_OTP_TTL_MINUTES = config("CONFIRMATION_OTP_TTL_MINUTES", default=30, cast=int)
+MAX_OTP_ATTEMPTS = config("MAX_OTP_ATTEMPTS", default=5, cast=int)
+
+# --- Affectation des courses ---
+# Un livreur ne reçoit une commande que s'il est à moins de ce rayon (km) de
+# la boutique : il doit être assez proche pour venir récupérer le colis.
+DRIVER_ASSIGNMENT_RADIUS_KM = config("DRIVER_ASSIGNMENT_RADIUS_KM", default=5, cast=float)
+
 # DRF
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [

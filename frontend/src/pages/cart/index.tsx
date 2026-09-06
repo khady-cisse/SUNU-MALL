@@ -30,7 +30,8 @@ export default function CartPage() {
   const user = useAuthStore((s) => s.user);
   const { data: cart, loading, refetch } = useAsync(() => (user ? shoppingApi.getCart() : Promise.resolve(null)), [user?.id]);
   const startCheckout = useCheckoutStore((s) => s.startCheckout);
-  const fetchCart = useCartStore((s) => s.fetchCart);
+  const updateCartItem = useCartStore((s) => s.updateItem);
+  const removeCartItem = useCartStore((s) => s.removeItem);
 
   const groups = useMemo(() => groupByStore(cart?.items ?? []), [cart]);
   const storeIds = useMemo(() => groups.map(([storeId]) => storeId), [groups]);
@@ -44,15 +45,13 @@ export default function CartPage() {
 
   async function updateQty(itemId: string, quantity: number) {
     if (quantity < 1) return;
-    await shoppingApi.updateCartItem(itemId, quantity);
+    await updateCartItem(itemId, quantity);
     refetch();
-    fetchCart();
   }
 
   async function remove(itemId: string) {
-    await shoppingApi.removeCartItem(itemId);
+    await removeCartItem(itemId);
     refetch();
-    fetchCart();
   }
 
   function goToCheckout(storeId: string, items: ApiCartItem[]) {

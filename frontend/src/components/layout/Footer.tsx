@@ -8,15 +8,15 @@ const FOOTER_COLUMNS: [string, { label: string; to?: string }[]][] = [
       { label: "Accueil", to: "/home" },
       { label: "Catégories", to: "/category" },
       { label: "Boutiques", to: "/boutiques" },
-      { label: "Promotions" },
+      { label: "Mes commandes", to: "/orders" },
     ],
   ],
-  ["Support", [{ label: "FAQ" }, { label: "Contact", to: "/contact" }, { label: "Aide livreurs" }]],
+  ["Support", [{ label: "FAQ", to: "/contact#faq" }, { label: "Contact", to: "/contact" }, { label: "Aide livreurs", to: "/driver-login" }]],
   [
     "Vendeurs",
-    [{ label: "Créer boutique", to: "/register-merchant" }, { label: "Abonnements" }, { label: "Guide vendeur" }],
+    [{ label: "Créer boutique", to: "/register-merchant" }, { label: "Abonnements", to: "/subscriptions" }, { label: "Guide vendeur", to: "/contact#faq" }],
   ],
-  ["Paiement", [{ label: "Wave" }, { label: "Orange Money" }, { label: "Carte bancaire" }]],
+  ["Paiement", [{ label: "Wave", to: "/contact#faq" }, { label: "Orange Money", to: "/contact#faq" }, { label: "Carte bancaire", to: "/contact#faq" }]],
 ];
 
 export function Footer() {
@@ -52,11 +52,15 @@ export function Footer() {
         <div className="mt-10 flex flex-col items-center justify-between gap-4 border-t border-white/10 pt-6 text-xs text-white/40 md:flex-row">
           <p>© 2026 SUNU MALL — NEJ digital</p>
           <div className="flex items-center gap-4">
-            {["Mentions légales", "Politique de confidentialité", "Conditions d'utilisation"].map((t) => (
-              <span key={t} className="cursor-pointer transition-colors hover:text-white">
-                {t}
-              </span>
-            ))}
+            <Link to="/mentions-legales" className="transition-colors hover:text-white">
+              Mentions légales
+            </Link>
+            <Link to="/politique-de-confidentialite" className="transition-colors hover:text-white">
+              Politique de confidentialité
+            </Link>
+            <Link to="/conditions-utilisation" className="transition-colors hover:text-white">
+              Conditions d'utilisation
+            </Link>
           </div>
         </div>
       </div>

@@ -1,8 +1,9 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { CheckCircle2, MapPin, Navigation, PackageSearch, Satellite, Truck } from "lucide-react";
+import { CheckCircle2, Copy, KeyRound, MapPin, Navigation, PackageSearch, RotateCcw, Satellite, Truck } from "lucide-react";
 import { useAsync } from "@/hooks/useAsync";
 import * as ordersApi from "@/api/orders";
+import { ApiError } from "@/lib/api";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
@@ -12,14 +13,15 @@ import type { DeliveryStatus } from "@/types";
 
 const DeliveryMap = lazy(() => import("@/components/marketplace/DeliveryMap").then((m) => ({ default: m.DeliveryMap })));
 
+// Le livreur fait progresser sa course jusqu'à « colis récupéré ». La remise
+// finale (« livré ») est validée par le CLIENT avec le code OTP remis en main
+// propre (page « Confirmer la livraison »), jamais par le livreur.
 const NEXT_STATUS: Partial<Record<DeliveryStatus, DeliveryStatus>> = {
   assigned: "picked_up",
-  picked_up: "delivered",
 };
 
 const NEXT_LABEL: Partial<Record<DeliveryStatus, string>> = {
   assigned: "Marquer « colis récupéré »",
-  picked_up: "Marquer « livré »",
 };
 
 export default function DriverDeliveryPage() {
@@ -29,6 +31,10 @@ export default function DriverDeliveryPage() {
   const [sharingPosition, setSharingPosition] = useState(false);
   const [autoTracking, setAutoTracking] = useState(false);
   const [positionMessage, setPositionMessage] = useState<string | null>(null);
+  const [confirmationCode, setConfirmationCode] = useState<string | null>(null);
+  const [codeMessage, setCodeMessage] = useState<string | null>(null);
+  const [regenerating, setRegenerating] = useState(false);
+  const [copied, setCopied] = useState(false);
   const lastSentAt = useRef(0);
 
   const { data: delivery, loading: loadingDelivery, refetch } = useAsync(
@@ -83,11 +89,46 @@ export default function DriverDeliveryPage() {
   async function advanceStatus() {
     if (!next || !deliveryId) return;
     setUpdating(true);
+    setCodeMessage(null);
     try {
-      await ordersApi.updateDeliveryStatus(deliveryId, next);
+      const response = await ordersApi.updateDeliveryStatus(deliveryId, next);
+      setConfirmationCode(response.confirmation_code ?? null);
+      if (response.confirmation_code) {
+        setCodeMessage("Colis récupéré : communiquez ce code au client. Le code n'est affiché qu'une seule fois !");
+      }
+      setCopied(false);
       refetch();
+    } catch (err) {
+      setCodeMessage(err instanceof ApiError ? String((err.data as Record<string, unknown>).detail ?? err.message) : "Impossible de mettre à jour la course.");
     } finally {
       setUpdating(false);
+    }
+  }
+
+  async function regenerateCode() {
+    if (!deliveryId) return;
+    setRegenerating(true);
+    setCopied(false);
+    try {
+      const response = await ordersApi.regenerateDeliveryOtp(deliveryId);
+      setConfirmationCode(response.confirmation_code);
+      setCodeMessage("Nouveau code généré : l'ancien est désormais invalide.");
+      refetch();
+    } catch (err) {
+      setCodeMessage(err instanceof ApiError ? String((err.data as Record<string, unknown>).detail ?? err.message) : "Impossible de régénérer le code.");
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
+  async function copyCode() {
+    if (!confirmationCode) return;
+    try {
+      await navigator.clipboard.writeText(confirmationCode);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCodeMessage("Impossible de copier le code automatiquement.");
     }
   }
 
@@ -162,6 +203,36 @@ export default function DriverDeliveryPage() {
           Statut actuel : <strong className="text-ink">{delivery.status}</strong>
         </p>
 
+        {delivery.status === "picked_up" && (
+          <div className="flex flex-col gap-3 rounded-lg border border-accent bg-muted/40 p-3">
+            <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+              <KeyRound className="h-4 w-4 text-orange" />
+              Code de confirmation à remettre au client
+            </div>
+            {confirmationCode ? (
+              <div className="flex items-center justify-between gap-3">
+                <span className="rounded-lg border border-dashed border-border bg-white px-4 py-2.5 font-mono text-2xl font-bold tracking-[0.35em] text-ink">
+                  {confirmationCode}
+                </span>
+                <Button variant="secondary" size="sm" onClick={copyCode}>
+                  <Copy className="h-4 w-4" />
+                  {copied ? "Copié !" : "Copier"}
+                </Button>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Le code a été affiché à la récupération du colis et n'est pas ré-envoyé par sécurité. Récupérez-le depuis l'historique
+                de cet écran ou régénérez-le.
+              </p>
+            )}
+            <Button variant="secondary" size="sm" onClick={regenerateCode} loading={regenerating} className="w-fit">
+              <RotateCcw className="h-4 w-4" />
+              Régénérer un nouveau code (invalide l'ancien)
+            </Button>
+            {codeMessage && <p className="text-xs font-medium text-muted-foreground">{codeMessage}</p>}
+          </div>
+        )}
+
         {next ? (
           <Button onClick={advanceStatus} loading={updating}>
             {NEXT_LABEL[delivery.status]}
@@ -169,7 +240,7 @@ export default function DriverDeliveryPage() {
         ) : (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             {delivery.status === "delivered" && <CheckCircle2 className="h-4 w-4 text-success" />}
-            {delivery.status === "delivered" ? "Livraison terminée." : "En attente d'affectation par le commerçant."}
+            {delivery.status === "delivered" ? "Course terminée : le client a confirmé la réception." : "En attente d'affectation par le commerçant."}
           </p>
         )}
 

@@ -557,3 +557,82 @@ class MerchantRegistrationIdentityTests(TestCase):
         user = User.objects.get(email=payload["email"])
         self.assertFalse(SellerKYC.objects.filter(seller=user).exists())
         mocked_send.assert_called_once()
+
+
+class ChangePasswordTests(TestCase):
+    """Changement de mot de passe et lever de l'obligation initiale."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username="driver@example.com",
+            email="driver@example.com",
+            password="testpassword123",
+            is_verified=True,
+            must_change_password=True,
+        )
+        Role.objects.get_or_create(name=Role.RoleName.DRIVER)
+        UserRole.objects.create(user=self.user, role=Role.objects.get(name=Role.RoleName.DRIVER))
+
+    def test_change_password_clears_must_change_password(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.post(
+            "/api/auth/change-password/",
+            {
+                "current_password": "testpassword123",
+                "new_password": "newpassword456",
+                "confirm_password": "newpassword456",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("newpassword456"))
+        self.assertFalse(self.user.must_change_password)
+
+    def test_change_password_requires_matching_confirmation(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.post(
+            "/api/auth/change-password/",
+            {
+                "current_password": "testpassword123",
+                "new_password": "newpassword456",
+                "confirm_password": "different789",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_change_password_requires_current_password(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.post(
+            "/api/auth/change-password/",
+            {
+                "current_password": "wrongpassword",
+                "new_password": "newpassword456",
+                "confirm_password": "newpassword456",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_change_password_requires_authentication(self):
+        response = self.client.post(
+            "/api/auth/change-password/",
+            {
+                "current_password": "testpassword123",
+                "new_password": "newpassword456",
+                "confirm_password": "newpassword456",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_login_exposes_must_change_password_flag(self):
+        response = self.client.post(
+            "/api/auth/login/",
+            {"email": "driver@example.com", "password": "testpassword123"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["user"]["must_change_password"])

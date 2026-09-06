@@ -95,7 +95,7 @@ export default function ContactPage() {
           <div className="rounded-2xl border border-gray-100 bg-white p-6 md:p-8">
             <h2 className="font-display text-lg font-bold text-gray-800">Écrivez-nous</h2>
             <p className="mt-1 text-sm text-gray-400">
-              Votre message sera composté dans votre messagerie (mailto) — pour un échange instantané, utilisez le chat en bas à droite.
+              Votre message sera composé dans votre messagerie (mailto) — pour un échange instantané, utilisez le chat en bas à droite.
             </p>
             <form onSubmit={handleSubmit} className="mt-6 space-y-4">
               {CONTACT_FIELDS.map(({ key, label, type, required }) => (
@@ -125,7 +125,7 @@ export default function ContactPage() {
             </form>
           </div>
 
-          <div className="rounded-2xl border border-gray-100 bg-white p-6 md:p-8">
+          <div id="faq" className="rounded-2xl border border-gray-100 bg-white p-6 md:p-8">
             <h2 className="font-display text-lg font-bold text-gray-800">Questions fréquentes</h2>
             <div className="mt-4 space-y-3">
               {FAQ.map((item) => (
