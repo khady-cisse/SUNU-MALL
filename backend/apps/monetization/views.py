@@ -124,6 +124,15 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
 
         today = timezone.now().date()
         days = plan.duration_days or BILLING_CYCLE_DAYS.get(plan.billing_cycle, 30)
+
+        # Premier mois gratuit (spec §31) : la TOUTE première souscription du
+        # vendeur est activée immédiatement, sans paiement, quel que soit le
+        # prix de la formule. Les souscriptions suivantes (renouvellement,
+        # resouscription après expiration) sont bien facturées.
+        # Calculé AVANT de créer la ligne : sinon la nouvelle souscription
+        # compterait comme "historique" et la promo ne serait jamais accordée.
+        first_month_free = plan.price > 0 and not services.has_subscription_history(user)
+
         subscription = Subscription.objects.create(
             plan=plan, subscriber_type="merchant", subscriber_id=user.id,
             starts_at=today, ends_at=today + timedelta(days=days),
@@ -132,12 +141,6 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
             SubscriptionHistory.Action.CREATED, new_plan=plan,
             old_end_date=None, new_end_date=subscription.ends_at,
         )
-
-        # Premier mois gratuit (spec §31) : la TOUTE première souscription du
-        # vendeur est activée immédiatement, sans paiement, quel que soit le
-        # prix de la formule. Les souscriptions suivantes (renouvellement,
-        # resouscription après expiration) sont bien facturées.
-        first_month_free = plan.price > 0 and not services.has_subscription_history(user)
 
         if plan.price <= 0 or first_month_free:
             subscription.status = Subscription.Status.ACTIVE

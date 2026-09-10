@@ -91,6 +91,11 @@ class MonetizationTestCase(TestCase):
     def get_plan(self, code):
         return SubscriptionPlan.objects.get(code=code)
 
+    def get_latest_subscription(self, seller):
+        """Dernière souscription du vendeur (les PK sont des UUID : on trie
+        par created_at, jamais par id)."""
+        return Subscription.objects.filter(subscriber_id=seller.id).order_by("-created_at").first()
+
     def create_store(self, owner, name="Ma Boutique"):
         return Store.objects.create(owner=owner, name=name)
 
@@ -178,7 +183,7 @@ class SubscriptionLifecycleTests(MonetizationTestCase):
             {"payment_method": "wave"},
         )
         payment_id = resp.json()["payment"]["id"]
-        sub = Subscription.objects.get(subscriber_id=self.seller.id)
+        sub = self.get_latest_subscription(self.seller)
         self.assertEqual(sub.status, Subscription.Status.PENDING)
         # Pas encore actif tant que le backend ne confirme pas.
         self.assertIsNone(services.active_subscription(self.seller))
@@ -202,7 +207,7 @@ class SubscriptionLifecycleTests(MonetizationTestCase):
             f"/api/monetization/subscription-plans/{self.get_plan('PRO').id}/subscribe/",
             {"payment_method": "wave"},
         )
-        sub = Subscription.objects.get(subscriber_id=self.seller.id)
+        sub = self.get_latest_subscription(self.seller)
         # Confirmer le paiement de souscription en attente (plus de paiement bloquant).
         Payment.objects.get(id=resp.json()["payment"]["id"]).mark_succeeded()
         sub.refresh_from_db()
@@ -223,7 +228,7 @@ class SubscriptionLifecycleTests(MonetizationTestCase):
             f"/api/monetization/subscription-plans/{self.get_plan('STARTER').id}/subscribe/",
             {"payment_method": "wave"},
         )
-        sub = Subscription.objects.get(subscriber_id=self.seller.id)
+        sub = self.get_latest_subscription(self.seller)
         Payment.objects.get(id=resp.json()["payment"]["id"]).mark_succeeded()
         sub.refresh_from_db()
         self.assertEqual(sub.status, Subscription.Status.ACTIVE)
@@ -250,7 +255,7 @@ class SubscriptionLifecycleTests(MonetizationTestCase):
             f"/api/monetization/subscription-plans/{self.get_plan('STARTER').id}/subscribe/",
             {"payment_method": "wave"},
         )
-        sub = Subscription.objects.get(subscriber_id=self.seller.id)
+        sub = self.get_latest_subscription(self.seller)
         resp = self.client.post(f"/api/monetization/subscriptions/{sub.id}/cancel/")
         self.assertEqual(resp.status_code, 200)
         sub.refresh_from_db()
@@ -278,7 +283,7 @@ class SubscriptionLifecycleTests(MonetizationTestCase):
             f"/api/monetization/subscription-plans/{self.get_plan('STARTER').id}/subscribe/",
             {"payment_method": "wave"},
         )
-        sub = Subscription.objects.get(subscriber_id=self.seller.id)
+        sub = self.get_latest_subscription(self.seller)
         sub.status = Subscription.Status.ACTIVE
         sub.ends_at = timezone.now().date() - timedelta(days=1)
         sub.save()
@@ -302,7 +307,7 @@ class ProductLimitTests(MonetizationTestCase):
             f"/api/monetization/subscription-plans/{plan.id}/subscribe/",
             {"payment_method": "wave"},
         )
-        sub = Subscription.objects.get(subscriber_id=self.seller.id)
+        sub = self.get_latest_subscription(self.seller)
         sub.status = Subscription.Status.ACTIVE
         sub.save(update_fields=["status"])
         return sub
@@ -354,7 +359,7 @@ class FirstMonthFreeTests(MonetizationTestCase):
         self.assertEqual(data["promo"], "first_month_free")
         self.assertIsNone(data["payment"])
         self.assertEqual(data["subscription"]["status"], Subscription.Status.ACTIVE)
-        sub = Subscription.objects.get(subscriber_id=self.seller.id)
+        sub = self.get_latest_subscription(self.seller)
         self.assertTrue(sub.is_active())
         # L'historique trace la promotion (preuve métier).
         self.assertTrue(
@@ -371,7 +376,7 @@ class FirstMonthFreeTests(MonetizationTestCase):
             {"payment_method": "wave"},
         )
         self.assertEqual(resp.status_code, 201, resp.content)
-        sub = Subscription.objects.get(subscriber_id=self.seller.id)
+        sub = self.get_latest_subscription(self.seller)
         sub.status = Subscription.Status.EXPIRED
         sub.ends_at = timezone.now().date() - timedelta(days=1)
         sub.save(update_fields=["status", "ends_at"])
