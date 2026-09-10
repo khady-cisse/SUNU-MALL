@@ -5,6 +5,7 @@ import { MarketplaceLayout } from "@/components/layout/MarketplaceLayout";
 import { CheckoutLayout } from "@/components/layout/CheckoutLayout";
 import { MerchantLayout } from "@/components/layout/MerchantLayout";
 import { DriverLayout } from "@/components/layout/DriverLayout";
+import { PartnerLayout } from "@/components/layout/PartnerLayout";
 import { AdminLayout } from "@/components/layout/AdminLayout";
 import { KycSessionWatcher } from "@/components/auth/KycSessionWatcher";
 
@@ -45,6 +46,9 @@ import StoreSettingsPage from "@/pages/store-settings";
 import AddProductPage from "@/pages/add-product";
 import CatalogPage from "@/pages/catalog";
 import SubscriptionsPage from "@/pages/subscriptions";
+import OffersPage from "@/pages/offers";
+import PromotionsPage from "@/pages/promotions";
+import MerchantSupportPage from "@/pages/support";
 import AnalyticsPage from "@/pages/analytics";
 import LiveSalesPage from "@/pages/live-sales";
 import OrderDetailPage from "@/pages/order-detail";
@@ -56,16 +60,50 @@ import DriverDeliveryPage from "@/pages/driver-delivery";
 import DriverProfilePage from "@/pages/driver-profile";
 import DriverPasswordChangePage from "@/pages/driver-password-change";
 
+import PartnerDashboardPage from "@/pages/partner";
+import PartnerDeliveriesPage from "@/pages/partner-deliveries";
+import PartnerDeliveryPage from "@/pages/partner-delivery";
+import PartnerDriversPage from "@/pages/partner-drivers";
+import PartnerZonesPage from "@/pages/partner-zones";
+import PartnerFinancesPage from "@/pages/partner-finances";
+import PartnerProfilePage from "@/pages/partner-profile";
+
 import AdminDashboardPage from "@/pages/admin";
 import AdminUsersPage from "@/pages/admin-users";
+import AdminUserDetailPage from "@/pages/admin-user-detail";
 import AdminManagersPage from "@/pages/admin-managers";
 import AdminShopsPage from "@/pages/admin-shops";
+import AdminSellersPage from "@/pages/admin-sellers";
+import AdminSellerDetailPage from "@/pages/admin-seller-detail";
+import AdminProductsPage from "@/pages/admin-products";
+import AdminCategoriesPage from "@/pages/admin-categories";
 import AdminOrdersPage from "@/pages/admin-orders";
 import AdminPaymentsPage from "@/pages/admin-payments";
+import AdminSubscriptionsPage from "@/pages/admin-subscriptions";
+import AdminRefundsPage from "@/pages/admin-refunds";
 import AdminKycSellersPage from "@/pages/admin-kyc-sellers";
 import AdminKycDriversPage from "@/pages/admin-kyc-drivers";
-import AdminFinancePage from "@/pages/admin-finance";
 import AdminDriversPage from "@/pages/admin-drivers";
+import AdminDeliveriesPage from "@/pages/admin-deliveries";
+import AdminPartnersPage from "@/pages/admin-partners";
+import AdminFinancePage from "@/pages/admin-finance";
+import AdminComplaintsPage from "@/pages/admin-complaints";
+import AdminComplaintDetailPage from "@/pages/admin-complaint-detail";
+import AdminSupportPage from "@/pages/admin-support";
+import AdminNotificationsPage from "@/pages/notifications";
+import AdminSearchPage from "@/pages/admin-search";
+import AdminSecurityPage from "@/pages/admin-security";
+import AdminAnalyticsPage from "@/pages/admin-analytics";
+import AdminReportsPage from "@/pages/admin-reports";
+import AdminMonitoringPage from "@/pages/admin-monitoring";
+import AdminIncidentsPage from "@/pages/admin-incidents";
+import AdminIncidentDetailPage from "@/pages/admin-incident-detail";
+import AdminLogsPage from "@/pages/admin-logs";
+import AdminDeploymentsPage from "@/pages/admin-deployments";
+import AdminFeatureFlagsPage from "@/pages/admin-feature-flags";
+import AdminMaintenancePage from "@/pages/admin-maintenance";
+import AdminBackupsPage from "@/pages/admin-backups";
+import AdminEmergencyPage from "@/pages/admin-emergency";
 
 export const router = createBrowserRouter([
   {
@@ -128,6 +166,9 @@ export const router = createBrowserRouter([
       { path: "/add-product", element: <AddProductPage /> },
       { path: "/catalog", element: <CatalogPage /> },
       { path: "/subscriptions", element: <SubscriptionsPage /> },
+      { path: "/offers", element: <OffersPage /> },
+      { path: "/promotions", element: <PromotionsPage /> },
+      { path: "/support", element: <MerchantSupportPage /> },
       { path: "/analytics", element: <AnalyticsPage /> },
       { path: "/live-sales", element: <LiveSalesPage /> },
       { path: "/order-detail", element: <OrderDetailPage /> },
@@ -149,20 +190,59 @@ export const router = createBrowserRouter([
   },
 
   {
+    element: <PartnerLayout />,
+    children: [
+      { path: "/partner", element: <PartnerDashboardPage /> },
+      { path: "/partner-deliveries", element: <PartnerDeliveriesPage /> },
+      { path: "/partner-delivery", element: <PartnerDeliveryPage /> },
+      { path: "/partner-drivers", element: <PartnerDriversPage /> },
+      { path: "/partner-zones", element: <PartnerZonesPage /> },
+      { path: "/partner-finances", element: <PartnerFinancesPage /> },
+      { path: "/partner-profile", element: <PartnerProfilePage /> },
+      { path: "/partner-notifications", element: <NotificationsPage /> },
+    ],
+  },
+
+  {
     element: <AdminLayout />,
     children: [
       { path: "/admin", element: <AdminDashboardPage /> },
+      { path: "/admin-search", element: <AdminSearchPage /> },
       { path: "/admin-users", element: <AdminUsersPage /> },
-      { path: "/admin-managers", element: <AdminManagersPage /> },
+      { path: "/admin-users/:id", element: <AdminUserDetailPage /> },
+      { path: "/admin-sellers", element: <AdminSellersPage /> },
+      { path: "/admin-sellers/:id", element: <AdminSellerDetailPage /> },
       { path: "/admin-shops", element: <AdminShopsPage /> },
+      { path: "/admin-products", element: <AdminProductsPage /> },
+      { path: "/admin-categories", element: <AdminCategoriesPage /> },
       { path: "/admin-orders", element: <AdminOrdersPage /> },
+      { path: "/admin-order-detail", element: <OrderDetailPage /> },
       { path: "/admin-payments", element: <AdminPaymentsPage /> },
+      { path: "/admin-subscriptions", element: <AdminSubscriptionsPage /> },
+      { path: "/admin-refunds", element: <AdminRefundsPage /> },
       { path: "/admin-kyc-sellers", element: <AdminKycSellersPage /> },
       { path: "/admin-kyc-drivers", element: <AdminKycDriversPage /> },
       { path: "/admin-drivers", element: <AdminDriversPage /> },
+      { path: "/admin-deliveries", element: <AdminDeliveriesPage /> },
+      { path: "/admin-partners", element: <AdminPartnersPage /> },
       { path: "/admin-finance", element: <AdminFinancePage /> },
-      { path: "/admin-order-detail", element: <OrderDetailPage /> },
-      { path: "/admin-notifications", element: <NotificationsPage /> },
+      { path: "/admin-complaints", element: <AdminComplaintsPage /> },
+      { path: "/admin-complaints/:id", element: <AdminComplaintDetailPage /> },
+      { path: "/admin-support", element: <AdminSupportPage /> },
+      { path: "/admin-notifications", element: <AdminNotificationsPage /> },
+      { path: "/admin-managers", element: <AdminManagersPage /> },
+      { path: "/admin-security", element: <AdminSecurityPage /> },
+      { path: "/admin-analytics", element: <AdminAnalyticsPage /> },
+      { path: "/admin-reports", element: <AdminReportsPage /> },
+      { path: "/admin-monitoring", element: <AdminMonitoringPage /> },
+      { path: "/admin-incidents", element: <AdminIncidentsPage /> },
+      { path: "/admin-incidents/:id", element: <AdminIncidentDetailPage /> },
+      { path: "/admin-logs", element: <AdminLogsPage /> },
+      { path: "/admin-deployments", element: <AdminDeploymentsPage /> },
+      { path: "/admin-feature-flags", element: <AdminFeatureFlagsPage /> },
+      { path: "/admin-maintenance", element: <AdminMaintenancePage /> },
+      { path: "/admin-backups", element: <AdminBackupsPage /> },
+      { path: "/admin-emergency", element: <AdminEmergencyPage /> },
     ],
   },
 

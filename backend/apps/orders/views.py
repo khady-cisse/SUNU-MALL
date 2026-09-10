@@ -11,14 +11,19 @@ from django.utils import timezone
 from django.utils.crypto import get_random_string
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
-from rest_framework.exceptions import AuthenticationFailed, PermissionDenied, ValidationError
+from rest_framework.exceptions import AuthenticationFailed, NotFound, PermissionDenied, ValidationError
 from rest_framework.response import Response
-from .models import Address, Delivery, DeliveryTracking, Driver, Order, OrderItem
-from .pricing import compute_delivery_fee
+from .models import (
+    Address, Delivery, DeliveryEvent, DeliveryPartner, DeliveryTracking, Driver,
+    Order, OrderItem, PartnerInvoice, PartnerZonePricing,
+)
+from .pricing import best_delivery_partner, compute_delivery_fee
 from .realtime import subscribe_delivery_events
 from .serializers import (
     AddressSerializer, CheckoutSerializer, DeliveryQuoteSerializer, DeliverySerializer,
     DeliveryTrackingSerializer, DriverSerializer, OrderSerializer,
+    DeliveryEventSerializer, DeliveryPartnerSerializer, DeliveryPartnerDetailSerializer,
+    PartnerInvoiceSerializer, PartnerZonePricingSerializer,
 )
 from apps.catalog.models import ProductVariant, Store
 from apps.payments.models import Payment, Refund
@@ -50,7 +55,7 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.has_role(Role.RoleName.ADMIN):
+        if user.is_admin():
             return Order.objects.all()
         return Order.objects.filter(
             models.Q(customer=user) | models.Q(store__owner=user) | models.Q(delivery__driver__user=user)
@@ -125,7 +130,12 @@ class OrderViewSet(viewsets.ModelViewSet):
             order.total_amount = total + order.delivery_fee
             order.save(update_fields=["total_amount"])
 
-            Delivery.objects.create(order=order)
+            delivery = Delivery.objects.create(order=order)
+            # Affectation automatique : le meilleur partenaire couvrant la zone
+            # (score, taux de réussite) devient responsable de la course (§2, §31).
+            partner = best_delivery_partner(address)
+            if partner is not None:
+                delivery.assign_partner(partner)
             Payment.objects.create(
                 order=order,
                 amount=order.total_amount,
@@ -150,7 +160,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         is_allowed = (
             order.customer_id == user.id
             or order.store.owner_id == user.id
-            or user.has_role(Role.RoleName.ADMIN)
+            or user.is_admin()
         )
         if not is_allowed:
             raise PermissionDenied("Vous ne pouvez annuler que vos propres commandes.")
@@ -177,11 +187,11 @@ class OrderViewSet(viewsets.ModelViewSet):
         return Response(OrderSerializer(order).data)
 
 
-class DriverViewSet(viewsets.ReadOnlyModelViewSet):
+class DriverViewSet(viewsets.ModelViewSet):
     """
-    Lecture des profils livreur : un admin voit tout, un commerçant voit les
-    livreurs disponibles (pour affecter une livraison), un livreur ne voit
-    que lui-même sauf via l'action `me`.
+    Profils livreur : un admin voit tout, un commerçant voit les livreurs
+    disponibles (pour affecter une livraison), un partenaire gère SES livreurs,
+    un livreur ne voit que lui-même sauf via l'action `me`.
 
     Avec le paramètre `?store=<uuid>`, seuls les livreurs disponibles situés
     à moins de `DRIVER_ASSIGNMENT_RADIUS_KM` km de la boutique sont renvoyés
@@ -193,8 +203,10 @@ class DriverViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.has_role(Role.RoleName.ADMIN):
+        if user.is_admin():
             return Driver.objects.all()
+        if user.has_role(Role.RoleName.PARTNER):
+            return Driver.objects.filter(partner__user=user)
         if user.has_role(Role.RoleName.MERCHANT):
             return Driver.objects.filter(availability_status=Driver.AvailabilityStatus.AVAILABLE)
         return Driver.objects.filter(user=user)
@@ -203,7 +215,7 @@ class DriverViewSet(viewsets.ReadOnlyModelViewSet):
         store_id = request.query_params.get("store")
         store = None
         if store_id and (
-            request.user.has_role(Role.RoleName.ADMIN) or request.user.has_role(Role.RoleName.MERCHANT)
+            request.user.is_admin() or request.user.has_role(Role.RoleName.MERCHANT)
         ):
             store = (
                 Store.objects.filter(pk=store_id, latitude__isnull=False, longitude__isnull=False).first()
@@ -228,14 +240,28 @@ class DriverViewSet(viewsets.ReadOnlyModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
+    def create(self, request, *args, **kwargs):
+        return self.register_driver(request)
+
+    @action(detail=False, methods=["post"])
+    def register(self, request):
+        """Alias — l'inscription passe aussi par POST /drivers/register/."""
+        return self.register_driver(request)
+
     @action(detail=False, methods=["post"], url_path="register")
     def register_driver(self, request):
-        """Crée un compte livreur (admin uniquement) : nom, prénom, email,
-        téléphone, type de véhicule. Le mot de passe provisoire est renvoyé
-        une seule fois ; le livreur devra le changer à sa première connexion."""
+        """Crée un compte livreur : un administrateur, ou un partenaire dans
+        SA propre entreprise (spec §12). Nom, prénom, email, téléphone, type
+        de véhicule. Le mot de passe provisoire est renvoyé une seule fois ;
+        le livreur devra le changer à sa première connexion."""
         User = get_user_model()
-        if not request.user.has_role(Role.RoleName.ADMIN):
-            raise PermissionDenied("Seul un administrateur peut créer un compte livreur.")
+        is_partner = request.user.has_role(Role.RoleName.PARTNER)
+        if not request.user.is_admin() and not is_partner:
+            raise PermissionDenied("Seul un administrateur ou un partenaire peut créer un compte livreur.")
+        if is_partner:
+            partner = DeliveryPartner.objects.filter(user=request.user).first()
+            if partner is None:
+                raise PermissionDenied("Aucune entreprise partenaire n'est liée à ce compte.")
 
         email = (request.data.get("email") or "").strip().lower()
         first_name = (request.data.get("first_name") or "").strip()
@@ -265,14 +291,28 @@ class DriverViewSet(viewsets.ReadOnlyModelViewSet):
         )
         role = Role.objects.get(name=Role.RoleName.DRIVER)
         UserRole.objects.create(user=user, role=role)
+        linked_partner = partner if is_partner else None
+        partner_id = request.data.get("partner")
+        if not is_partner and partner_id:
+            linked_partner = DeliveryPartner.objects.filter(pk=partner_id).first()
         driver = Driver.objects.create(
             user=user,
             vehicle_type=vehicle_type,
             availability_status=Driver.AvailabilityStatus.OFFLINE,
+            partner=linked_partner,
         )
         data = DriverSerializer(driver).data
         data["temporary_password"] = temporary_password
         return Response(data, status=status.HTTP_201_CREATED)
+
+    def perform_update(self, serializer):
+        # Un partenaire ne peut modifier que les livreurs de son entreprise.
+        user = self.request.user
+        if user.has_role(Role.RoleName.PARTNER):
+            partner = DeliveryPartner.objects.filter(user=user).first()
+            if serializer.instance.partner_id != (partner.id if partner else None):
+                raise PermissionDenied("Vous ne pouvez modifier que les livreurs de votre entreprise.")
+        serializer.save()
 
     @action(detail=False, methods=["get", "patch"], url_path="me")
     def me(self, request):
@@ -324,24 +364,55 @@ class DriverViewSet(viewsets.ReadOnlyModelViewSet):
 
 class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    Livraisons : un livreur voit celles qui lui sont affectées, un commerçant
-    celles de ses commandes, l'admin voit tout. La livraison elle-même est
-    créée automatiquement par `OrderViewSet.checkout`, pas ici.
+    Livraisons : un livreur voit celles qui lui sont affectées, un partenaire
+    celles de son entreprise, un commerçant celles de ses commandes, l'admin
+    voit tout. La livraison elle-même est créée automatiquement par
+    `OrderViewSet.checkout`, pas ici.
     """
     serializer_class = DeliverySerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
-        if user.has_role(Role.RoleName.ADMIN):
+        if user.is_admin():
             return Delivery.objects.all()
+        if user.has_role(Role.RoleName.PARTNER):
+            return Delivery.objects.filter(partner__user=user)
         if user.has_role(Role.RoleName.DRIVER):
             return Delivery.objects.filter(driver__user=user)
         return Delivery.objects.filter(order__store__owner=user)
 
+    def _partner_for(self, user):
+        return DeliveryPartner.objects.filter(user=user).first()
+
+    @action(detail=True, methods=["post"], url_path="suggest")
+    def suggest_drivers(self, request, pk=None):
+        """Renvoie les meilleurs livreurs candidats pour cette livraison
+        (disponibles, non suspendus, proches de la boutique) — utilisé par
+        l'Espace Partenaire pour proposer une affectation en un clic."""
+        delivery = get_object_or_404(Delivery, pk=pk)
+        user = request.user
+        if user.has_role(Role.RoleName.PARTNER):
+            partner = self._partner_for(user)
+            if delivery.partner_id != (partner.id if partner else None):
+                raise PermissionDenied("Cette livraison n'appartient pas à votre entreprise.")
+        elif not user.is_admin() and not (
+            user.has_role(Role.RoleName.MERCHANT) and delivery.order.store.owner_id == user.id
+        ):
+            raise PermissionDenied("Vous ne pouvez pas consulter cette livraison.")
+        suggested = delivery.suggested_driver(limit=int(request.query_params.get("limit", 5)))
+        if suggested is None:
+            return Response({"drivers": [], "message": "Aucun livreur disponible pour le moment."})
+        return Response({
+            "drivers": DriverSerializer(
+                [suggested], many=True, context={"store": delivery.order.store}
+            ).data,
+        })
+
     @action(detail=True, methods=["post"], url_path="assign")
     def assign(self, request, pk=None):
-        """Le commerçant (ou l'admin) affecte un livreur à la livraison de sa commande.
+        """Affecte un livreur : le commerçant, le partenaire (son entreprise)
+        ou l'admin.
 
         Règle métier : le livreur doit se trouver à moins de
         `DRIVER_ASSIGNMENT_RADIUS_KM` km de la boutique — il doit être assez
@@ -349,9 +420,16 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
         """
         delivery = get_object_or_404(Delivery, pk=pk)
         user = request.user
-        if not user.has_role(Role.RoleName.ADMIN) and delivery.order.store.owner_id != user.id:
-            raise PermissionDenied("Vous ne pouvez affecter un livreur qu'à vos propres commandes.")
+        is_partner = user.has_role(Role.RoleName.PARTNER)
+        partner = self._partner_for(user) if is_partner else None
+        if not user.is_admin() and not (
+            (is_partner and delivery.partner_id == (partner.id if partner else None))
+            or (user.has_role(Role.RoleName.MERCHANT) and delivery.order.store.owner_id == user.id)
+        ):
+            raise PermissionDenied("Vous ne pouvez affecter un livreur qu'aux livraisons de votre entreprise.")
         driver = get_object_or_404(Driver, pk=request.data.get("driver"))
+        if is_partner and driver.partner_id != (partner.id if partner else None):
+            raise ValidationError("Vous ne pouvez affecter que des livreurs de votre entreprise.")
 
         store = delivery.order.store
         if store.latitude is None or store.longitude is None:
@@ -371,34 +449,85 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
                 f"Affectez un livreur situé à proximité."
             )
 
-        delivery.assign_driver(driver)
+        delivery.assign_driver(driver, user=user)
         delivery.broadcast_status(
             f"Votre commande est prise en charge par {driver.user.get_full_name() or driver.user.email}."
         )
         return Response(DeliverySerializer(delivery).data)
 
+    @action(detail=True, methods=["post"], url_path="accept")
+    def accept(self, request, pk=None):
+        """Le livreur accepte la mission qui lui est affectée (§5, §8, §29)."""
+        delivery = get_object_or_404(Delivery, pk=pk)
+        try:
+            delivery.accept(user=request.user)
+        except PermissionError as exc:
+            raise PermissionDenied(str(exc))
+        except ValueError as exc:
+            raise ValidationError(str(exc))
+        delivery.broadcast_status("Mission acceptée par le livreur.")
+        return Response(DeliverySerializer(delivery).data)
+
+    @action(detail=True, methods=["post"], url_path="refuse")
+    def refuse(self, request, pk=None):
+        """Le livreur refuse la mission avec un motif (spec §8) : la course
+        redevient affectable et un autre livreur est proposé en priorité."""
+        delivery = get_object_or_404(Delivery, pk=pk)
+        reason = (request.data.get("reason") or "").strip()
+        comment = (request.data.get("comment") or "").strip()
+        if not reason:
+            raise ValidationError("Un motif de refus est obligatoire.")
+        try:
+            delivery.refuse(user=request.user, reason=reason, comment=comment)
+        except PermissionError as exc:
+            raise PermissionDenied(str(exc))
+        except ValueError as exc:
+            raise ValidationError(str(exc))
+        return Response(DeliverySerializer(delivery).data)
+
     @action(detail=True, methods=["post"], url_path="status")
     def update_status(self, request, pk=None):
-        """Le livreur affecté fait progresser le statut de sa course.
+        """Le livreur affecté (ou l'admin) fait progresser le statut de sa course.
 
-        Jusqu'à « colis récupéré » (picked_up) : à ce moment, un code de
-        confirmation OTP est généré et remis au livreur (dans la réponse,
-        une seule fois) — le livreur le communique physiquement au client.
-        La transition vers « livré » n'est PAS possible par le livreur : elle
-        est validée par le client via `confirm` (code OTP), ou par un admin
-        (dépannage) via cette même action.
+        Chaîne 2025 (spec §5) : assigned → accepted → pickup_pending → picked_up
+        → in_transit → out_for_delivery → delivered.
+
+        La transition vers « livré » n'est PAS possible par le livreur via
+        cette action : elle est validée par le client avec le code OTP
+        (`confirm`), ou par un admin (dépannage).
         """
         delivery = get_object_or_404(Delivery, pk=pk)
         user = request.user
         is_assigned_driver = delivery.driver and delivery.driver.user_id == user.id
-        is_admin = user.has_role(Role.RoleName.ADMIN)
+        is_admin = user.is_admin()
         if not is_admin and not is_assigned_driver:
             raise PermissionDenied("Seul le livreur affecté peut mettre à jour cette livraison.")
 
         new_status = request.data.get("status")
         allowed_transitions = {
-            Delivery.Status.ASSIGNED: [Delivery.Status.PICKED_UP, *([Delivery.Status.DELIVERED] if is_admin else [])],
-            Delivery.Status.PICKED_UP: [Delivery.Status.DELIVERED] if is_admin else [],
+            Delivery.Status.ASSIGNED: [
+                Delivery.Status.ACCEPTED, Delivery.Status.PICKED_UP,
+                *([Delivery.Status.DELIVERED] if is_admin else []),
+            ],
+            Delivery.Status.ACCEPTED: [
+                Delivery.Status.PICKUP_PENDING, Delivery.Status.PICKED_UP,
+                *([Delivery.Status.DELIVERED] if is_admin else []),
+            ],
+            Delivery.Status.PICKUP_PENDING: [
+                Delivery.Status.PICKED_UP,
+                *([Delivery.Status.DELIVERED] if is_admin else []),
+            ],
+            Delivery.Status.PICKED_UP: [
+                Delivery.Status.IN_TRANSIT,
+                *([Delivery.Status.DELIVERED] if is_admin else []),
+            ],
+            Delivery.Status.IN_TRANSIT: [
+                Delivery.Status.OUT_FOR_DELIVERY,
+                *([Delivery.Status.DELIVERED] if is_admin else []),
+            ],
+            Delivery.Status.OUT_FOR_DELIVERY: [
+                *([Delivery.Status.DELIVERED] if is_admin else []),
+            ],
         }
         if new_status not in allowed_transitions.get(delivery.status, []):
             raise ValidationError(
@@ -411,16 +540,21 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
             delivery.picked_up_at = timezone.now()
             confirmation_code = delivery.generate_confirmation_otp()
             self._notify_customer_pickup(delivery)
-        elif new_status == Delivery.Status.DELIVERED:
-            delivery.delivered_at = timezone.now()
+        self._stamp(delivery, new_status)
         delivery.save()
+        delivery.record_event("status_changed", user=user, actor_role="driver" if not is_admin else "admin",
+                              previous_status=delivery.status, new_status=new_status)
 
         if new_status == Delivery.Status.DELIVERED:
             delivery.order.change_status(Order.Status.DELIVERED, changed_by=user)
 
         status_messages = {
             Delivery.Status.ASSIGNED: "Un livreur vous est affecté.",
+            Delivery.Status.ACCEPTED: "Le livreur a accepté votre commande.",
+            Delivery.Status.PICKUP_PENDING: "Le livreur se rend à la boutique.",
             Delivery.Status.PICKED_UP: "Le livreur a récupéré votre colis : en route !",
+            Delivery.Status.IN_TRANSIT: "Votre colis est en route vers l'adresse de livraison.",
+            Delivery.Status.OUT_FOR_DELIVERY: "Le livreur est à votre adresse : votre commande arrive !",
             Delivery.Status.DELIVERED: "Votre commande est livrée. Bonne réception !",
         }
         delivery.broadcast_status(status_messages.get(delivery.status, ""))
@@ -431,6 +565,74 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
             # n'est jamais rejoué par les lectures classiques de la livraison.
             data["confirmation_code"] = confirmation_code
         return Response(data)
+
+    @staticmethod
+    def _stamp(delivery, new_status):
+        stamps = {
+            Delivery.Status.ACCEPTED: "accepted_at",
+            Delivery.Status.PICKUP_PENDING: None,
+            Delivery.Status.PICKED_UP: "picked_up_at",
+            Delivery.Status.IN_TRANSIT: "in_transit_at",
+            Delivery.Status.OUT_FOR_DELIVERY: "out_for_delivery_at",
+            Delivery.Status.DELIVERED: "delivered_at",
+        }
+        field = stamps.get(new_status)
+        if field:
+            setattr(delivery, field, timezone.now())
+
+    @action(detail=True, methods=["post"], url_path="fail")
+    def fail(self, request, pk=None):
+        """Le livreur signale un échec de livraison (§16-§17) : motif
+        obligatoire + commentaire. La course passe en `delivery_failed` ou
+        `customer_unavailable`, et une demande de retour peut être émise."""
+        delivery = get_object_or_404(Delivery, pk=pk)
+        user = request.user
+        is_assigned_driver = delivery.driver and delivery.driver.user_id == user.id
+        if not user.is_admin() and not is_assigned_driver:
+            raise PermissionDenied("Seul le livreur affecté peut signaler un échec.")
+        if delivery.status not in [
+            Delivery.Status.OUT_FOR_DELIVERY, Delivery.Status.IN_TRANSIT, Delivery.Status.PICKED_UP,
+        ]:
+            raise ValidationError("Échec impossible dans l'état actuel de la course.")
+        delivery.mark_failed(
+            user=user, actor_role="driver" if not is_admin else "admin",
+            reason=request.data.get("reason"), comment=request.data.get("comment", ""),
+        )
+        return Response(DeliverySerializer(delivery).data)
+
+    @action(detail=True, methods=["post"], url_path="return")
+    def request_return(self, request, pk=None):
+        """Demande de retour du colis au vendeur (spec §18)."""
+        delivery = get_object_or_404(Delivery, pk=pk)
+        user = request.user
+        is_assigned_driver = delivery.driver and delivery.driver.user_id == user.id
+        if not user.is_admin() and not is_assigned_driver:
+            raise PermissionDenied("Seul le livreur affecté peut demander un retour.")
+        delivery.request_return(
+            user=user, actor_role="driver" if not is_assigned_driver else "driver",
+            reason=request.data.get("reason"), comment=request.data.get("comment", ""),
+        )
+        return Response(DeliverySerializer(delivery).data)
+
+    @action(detail=True, methods=["post"], url_path="return/complete")
+    def mark_returned(self, request, pk=None):
+        """Le retour est terminé : le colis est rendu au vendeur (§18)."""
+        delivery = get_object_or_404(Delivery, pk=pk)
+        user = request.user
+        is_assigned_driver = delivery.driver and delivery.driver.user_id == user.id
+        if not user.is_admin() and not is_assigned_driver:
+            raise PermissionDenied("Seul le livreur affecté peut confirmer le retour.")
+        delivery.mark_returned(user=user, actor_role="driver", comment=request.data.get("comment", ""))
+        return Response(DeliverySerializer(delivery).data)
+
+    @action(detail=True, methods=["get"], url_path="events-history")
+    def events_history(self, request, pk=None):
+        """Timeline complète de la livraison (spec §28) pour l'Espace Partenaire/livreur."""
+        delivery = self.get_object()
+        events = delivery.events.select_related("actor").all()
+        return Response(
+            DeliveryEventSerializer(events, many=True).data
+        )
 
     @staticmethod
     def _notify_customer_pickup(delivery):
@@ -459,7 +661,7 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
         remis par le livreur (le destinataire ou un admin)."""
         delivery = get_object_or_404(Delivery, pk=pk)
         user = request.user
-        is_allowed = delivery.order.customer_id == user.id or user.has_role(Role.RoleName.ADMIN)
+        is_allowed = delivery.order.customer_id == user.id or user.is_admin()
         if not is_allowed:
             raise PermissionDenied("Seul le destinataire de la commande peut confirmer la réception.")
         if delivery.status != Delivery.Status.PICKED_UP:
@@ -492,7 +694,7 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
         delivery = get_object_or_404(Delivery, pk=pk)
         user = request.user
         is_assigned_driver = delivery.driver and delivery.driver.user_id == user.id
-        if not user.has_role(Role.RoleName.ADMIN) and not is_assigned_driver:
+        if not user.is_admin() and not is_assigned_driver:
             raise PermissionDenied("Seul le livreur affecté peut régénérer un code.")
         if delivery.status != Delivery.Status.PICKED_UP:
             raise ValidationError("Aucun code à régénérer dans l'état actuel de la course.")
@@ -508,7 +710,7 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
         delivery = get_object_or_404(Delivery, pk=pk)
         user = request.user
         is_assigned_driver = delivery.driver and delivery.driver.user_id == user.id
-        if not user.has_role(Role.RoleName.ADMIN) and not is_assigned_driver:
+        if not user.is_admin() and not is_assigned_driver:
             raise PermissionDenied("Seul le livreur affecté peut partager sa position.")
 
         serializer = DeliveryTrackingSerializer(data={**request.data, "delivery": delivery.id})
@@ -560,7 +762,8 @@ class DeliveryEventStreamView(viewsets.ViewSet):
             delivery.order.customer_id == user.id
             or delivery.order.store.owner_id == user.id
             or (delivery.driver_id and delivery.driver.user_id == user.id)
-            or user.has_role(Role.RoleName.ADMIN)
+            or (delivery.partner_id and delivery.partner.user_id == user.id)
+            or user.is_admin()
         )
         if not is_allowed:
             raise PermissionDenied("Vous n'êtes pas autorisé à suivre cette livraison.")
@@ -607,3 +810,160 @@ class DeliveryEventStreamView(viewsets.ViewSet):
         response["Cache-Control"] = "no-cache"
         response["X-Accel-Buffering"] = "no"
         return response
+
+
+class PartnerViewSet(viewsets.ModelViewSet):
+    """Gestion administrative des entreprises partenaires (admin uniquement).
+
+    - Création, lecture, mise à jour, suspension des partenaires.
+    - `activate` / `suspend` : bascule du statut opérationnel.
+    - `rotate-api-key` : régénère la clé d'API d'intégration du partenaire.
+    """
+
+    queryset = DeliveryPartner.objects.all().order_by("-created_at")
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_serializer_class(self):
+        if self.action == "retrieve":
+            return DeliveryPartnerDetailSerializer
+        return DeliveryPartnerSerializer
+
+    def get_queryset(self):
+        if not self.request.user.is_admin():
+            raise PermissionDenied("Seul un administrateur gère les entreprises partenaires.")
+        return super().get_queryset()
+
+    @action(detail=True, methods=["post"], url_path="activate")
+    def activate(self, request, pk=None):
+        partner = self.get_object()
+        partner.status = DeliveryPartner.Status.ACTIVE
+        partner.save()
+        return Response(DeliveryPartnerDetailSerializer(partner).data)
+
+    @action(detail=True, methods=["post"], url_path="suspend")
+    def suspend(self, request, pk=None):
+        partner = self.get_object()
+        partner.status = DeliveryPartner.Status.SUSPENDED
+        partner.save()
+        return Response(DeliveryPartnerDetailSerializer(partner).data)
+
+    @action(detail=True, methods=["post"], url_path="rotate-api-key")
+    def rotate_api_key(self, request, pk=None):
+        partner = self.get_object()
+        raw = partner.rotate_api_key()
+        return Response({"api_key": raw, "api_key_last4": partner.api_key_last4})
+
+
+class PartnerSpaceViewSet(viewsets.ViewSet):
+    """Espace Partenaire : l'utilisateur `partner` pilote son entreprise.
+
+    Routes :
+    - GET  /api/orders/partner/profile/        → profil de l'entreprise
+    - PATCH /api/orders/partner/profile/       → mise à jour du profil
+    - POST /api/orders/partner/api-key/        → rotation clé d'API
+    - GET  /api/orders/partner/stats/          → tableau de bord (spec §6)
+    - GET  /api/orders/partner/deliveries/     → livraisons (filtres si trouvés)
+    - GET  /api/orders/partner/invoices/       → factures (spec §19-§22)
+    - GET  /api/orders/partner/invoices/<pk>/  → détail + délai de paiement
+    - GET  /api/orders/partner/zones/          → tarifs par zone
+    - PATCH /api/orders/partner/zones/<pk>/    → ajuster un tarif zone
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _partner(self, request):
+        partner = DeliveryPartner.objects.filter(user=request.user).first()
+        if partner is None:
+            raise NotFound("Aucune entreprise partenaire n'est liée à votre compte.")
+        return partner
+
+    def profile(self, request):
+        partner = self._partner(request)
+        if request.method == "PATCH":
+            serializer = DeliveryPartnerSerializer(partner, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+        return Response(DeliveryPartnerDetailSerializer(partner).data)
+
+    def api_key(self, request):
+        partner = self._partner(request)
+        raw = partner.rotate_api_key()
+        return Response({"api_key": raw, "api_key_last4": partner.api_key_last4})
+
+    def banks(self, request):
+        """Moyens de paiement du partenaire (affichage) — complétion §12 monétique."""
+        partner = self._partner(request)
+        return Response({"method": "bank_transfer", "iban": "", "provider": ""})
+
+    def stats(self, request):
+        partner = self._partner(request)
+        today = timezone.localdate()
+        month_start = today.replace(day=1)
+        deliveries = partner.deliveries
+
+        def _count(qs):
+            return qs.count()
+
+        active = deliveries.exclude(
+            status__in=[
+                Delivery.Status.DELIVERED, Delivery.Status.DELIVERY_FAILED,
+                Delivery.Status.CUSTOMER_UNAVAILABLE, Delivery.Status.RETURNED,
+                Delivery.Status.CANCELLED,
+            ]
+        )
+        month_deliveries = deliveries.filter(created_at__date__gte=month_start)
+        total_revenue = sum(
+            (d.partner_cost_for(d) for d in deliveries.filter(status=Delivery.Status.DELIVERED)),
+            Decimal("0"),
+        )
+        unpaid_amount = sum(
+            (inv.balance for inv in partner.invoices.filter(status=PartnerInvoice.Status.PENDING)),
+            Decimal("0"),
+        )
+        return Response({
+            "period_start": today.isoformat(),
+            "deliveries_total": _count(deliveries),
+            "deliveries_in_progress": _count(active),
+            "deliveries_delivered": _count(deliveries.filter(status=Delivery.Status.DELIVERED)),
+            "deliveries_failed": _count(deliveries.filter(
+                status__in=[Delivery.Status.DELIVERY_FAILED, Delivery.Status.CUSTOMER_UNAVAILABLE]
+            )),
+            "deliveries_returned": _count(deliveries.filter(status__in=[
+                Delivery.Status.RETURN_REQUESTED, Delivery.Status.RETURNED,
+            ])),
+            "deliveries_month": _count(month_deliveries),
+            "success_rate": partner.success_rate(),
+            "return_rate": partner.return_rate(),
+            "avg_delay_minutes": partner.avg_delay_minutes(),
+            "active_drivers": partner.active_drivers().count(),
+            "total_revenue": str(total_revenue),
+            "unpaid_amount": str(unpaid_amount),
+        })
+
+    def deliveries(self, request):
+        partner = self._partner(request)
+        qs = partner.deliveries.select_related("order", "order__store", "driver", "driver__user")
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return Response(DeliverySerializer(qs, many=True).data)
+
+    def invoices(self, request):
+        partner = self._partner(request)
+        return Response(PartnerInvoiceSerializer(partner.invoices.all(), many=True).data)
+
+    def invoice_detail(self, request, pk=None):
+        partner = self._partner(request)
+        invoice = get_object_or_404(partner.invoices, pk=pk)
+        return Response(PartnerInvoiceSerializer(invoice).data)
+
+    def zones(self, request):
+        partner = self._partner(request)
+        return Response(PartnerZonePricingSerializer(partner.zone_pricings.all(), many=True).data)
+
+    def zone_update(self, request, pk=None):
+        partner = self._partner(request)
+        zp = get_object_or_404(partner.zone_pricings, pk=pk)
+        serializer = PartnerZonePricingSerializer(zp, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)

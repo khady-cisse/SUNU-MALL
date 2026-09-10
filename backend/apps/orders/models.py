@@ -1,11 +1,17 @@
 """
-Commandes et livraison.
+Commandes et livraison + partenaires logistiques (Espace Partenaire).
+
+Le système de livraison de SUNU MALL fonctionne avec des entreprises
+logistiques partenaires (DeliveryPartner) qui emploient chacune leurs
+livreurs (Driver). Une livraison (Delivery) est affectée à un partenaire
+puis à un livreur ; chaque transition de statut est tracée dans
+DeliveryEvent (traçabilité complète, spec §28).
 """
 import hashlib
 import secrets
 import uuid
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.conf import settings
 from django.db import models
@@ -74,6 +80,210 @@ class DeliveryZone(models.Model):
         return self.name
 
 
+class DeliveryPartner(models.Model):
+    """Entreprise de livraison partenaire (Espace Partenaire, spec §3).
+
+    Sunu Mall ne possède pas sa propre flotte : elle connecte un ou plusieurs
+    partenaires logistiques. Chaque partenaire emploie ses propres livreurs et
+    ne voit jamais les données des autres partenaires (isolation stricte,
+    spec §24).
+    """
+
+    class Status(models.TextChoices):
+        INACTIVE = "inactive", "Inactif"
+        ACTIVE = "active", "Actif"
+        SUSPENDED = "suspended", "Suspendu"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Compte utilisateur (rôle `partner`) qui pilote l'Espace Partenaire ;
+    # l'admin lie l'entreprise à un compte après activation (spec §2, §11).
+    user = models.OneToOneField(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='partner_profile'
+    )
+    name = models.CharField(max_length=255)
+    contact_name = models.CharField(max_length=150, blank=True)
+    contact_email = models.EmailField(blank=True)
+    contact_phone = models.CharField(max_length=30, blank=True)
+    address = models.TextField(blank=True)
+    city = models.CharField(max_length=100, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.INACTIVE)
+    # Score automatique (0-100) basé sur taux de réussite, SLA, retours, etc.
+    # Recalculé périodiquement (ou à la volée) — voir `compute_score`.
+    score = models.PositiveSmallIntegerField(default=0)
+    # Clé d'API pour les échanges machine ↔ machine (spec §23). Seul le hash
+    # est stocké ; le clair n'est rendu qu'une fois à la génération.
+    api_key_hash = models.CharField(max_length=64, blank=True, default="")
+    api_key_last4 = models.CharField(max_length=4, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.name} ({self.status})"
+
+    def is_active(self):
+        return self.status == self.Status.ACTIVE
+
+    def active_drivers(self):
+        return self.drivers.filter(is_suspended=False)
+
+    def delivery_count(self):
+        return self.deliveries.count()
+
+    def delivered_count(self):
+        return self.deliveries.filter(status=Delivery.Status.DELIVERED).count()
+
+    def success_rate(self, days=90):
+        """Taux de livraisons réussies sur les N derniers jours (0-100)."""
+        cutoff = timezone.now() - timedelta(days=days)
+        base = self.deliveries.filter(created_at__gte=cutoff)
+        delivered = base.filter(status=Delivery.Status.DELIVERED).count()
+        failed = base.filter(
+            status__in=[Delivery.Status.DELIVERY_FAILED, Delivery.Status.CUSTOMER_UNAVAILABLE]
+        ).count()
+        settled = delivered + failed
+        if settled == 0:
+            return 100.0
+        return round(delivered / settled * 100, 1)
+
+    def return_rate(self, days=90):
+        cutoff = timezone.now() - timedelta(days=days)
+        base = self.deliveries.filter(created_at__gte=cutoff)
+        total = base.count()
+        if total == 0:
+            return 0.0
+        returned = base.filter(status=Delivery.Status.RETURNED).count()
+        return round(returned / total * 100, 1)
+
+    def avg_delay_minutes(self, days=90):
+        """Délai moyen (affectation -> livraison) des livraisons réussies, en minutes."""
+        cutoff = timezone.now() - timedelta(days=days)
+        delivered = self.deliveries.filter(status=Delivery.Status.DELIVERED, delivered_at__isnull=False).filter(
+            created_at__gte=cutoff
+        )
+        total = 0
+        count = 0
+        for delivery in delivered:
+            if delivery.assigned_at:
+                total += (delivery.delivered_at - delivery.assigned_at).total_seconds() / 60
+                count += 1
+        return round(total / count, 1) if count else 0.0
+
+    def compute_score(self, days=90):
+        """Score automatique 0-100 basé sur la performance récente.
+
+        Pondération : réussite (50), délais/SLA (25), retours (15), échecs (10).
+        Aucun historique -> score neutre (100) plutôt que 0 pour ne pas
+        pénaliser une entreprise tout juste intégrée.
+        """
+        cutoff = timezone.now() - timedelta(days=days)
+        base = self.deliveries.filter(created_at__gte=cutoff)
+        total = base.count()
+        if total == 0:
+            self.score = 100
+            self.save(update_fields=["score"])
+            return 100
+
+        delivered = base.filter(status=Delivery.Status.DELIVERED).count()
+        failed = base.filter(
+            status__in=[Delivery.Status.DELIVERY_FAILED, Delivery.Status.CUSTOMER_UNAVAILABLE]
+        ).count()
+        returned = base.filter(status=Delivery.Status.RETURNED).count()
+
+        success_score = 50.0 * (delivered / total)
+        failure_score = 10.0 * (1 - failed / total)
+        return_score = 15.0 * (1 - returned / total)
+
+        avg_delay = self.avg_delay_minutes(days)
+        on_time_score = 25.0
+        if avg_delay > 0:
+            expected = self._expected_delay_minutes()
+            ratio = max(0.0, min(1.0, expected / avg_delay if avg_delay else 1))
+            on_time_score = 25.0 * ratio
+
+        score = round(success_score + failure_score + return_score + on_time_score)
+        score = max(0, min(100, score))
+        self.score = score
+        self.save(update_fields=["score"])
+        return score
+
+    def _expected_delay_minutes(self):
+        """Délai contractuel moyen (min des délais déclarés sur les zones couvertes)."""
+        delays = list(
+            self.zone_pricings.filter(is_available=True, estimated_delay_minutes__gt=0)
+            .values_list("estimated_delay_minutes", flat=True)
+        )
+        return float(min(delays)) if delays else 60.0
+
+    def covers_zone(self, zone):
+        if not zone or not self.is_active():
+            return False
+        return self.zone_pricings.filter(zone=zone, is_available=True).exists()
+
+    def partner_cost_for(self, delivery):
+        """Coût payé au partenaire pour une livraison donnée (tarif zone §22).
+
+        Le coût est figé au moment du calcul à partir de la zone correspondant
+        à l'adresse de livraison ; 0 si aucune zone tarifée ne couvre la course.
+        """
+        address = delivery.order.address
+        if address is None:
+            return Decimal("0")
+        pk_list = self.zone_pricings.filter(is_available=True).values_list("id", flat=True)
+        for pricing_id in pk_list:
+            p = self.zone_pricings.select_related("zone").get(id=pricing_id)
+            if p.zone.contains(address.latitude, address.longitude):
+                return p.partner_cost
+        return Decimal("0")
+
+    def rotate_api_key(self):
+        """Génère une nouvelle clé d'API ; seul le hash est conservé."""
+        raw = f"sm_{secrets.token_urlsafe(32)}"
+        self.api_key_hash = hashlib.sha256(raw.encode()).hexdigest()
+        self.api_key_last4 = raw[-4:]
+        self.save(update_fields=["api_key_hash", "api_key_last4"])
+        return raw
+
+    def check_api_key(self, raw):
+        if not raw or not self.api_key_hash:
+            return False
+        candidate = hashlib.sha256(raw.encode()).hexdigest()
+        return secrets.compare_digest(candidate, self.api_key_hash)
+
+
+class PartnerZonePricing(models.Model):
+    """Tarification d'un partenaire pour une zone (spec §21, §22).
+
+    Sunu Mall utilise `client_fee` pour facturer le client (frais de
+    livraison) et paie `partner_cost` au partenaire ; la marge Sunu Mall est
+    la différence, calculée côté serveur uniquement.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    partner = models.ForeignKey(DeliveryPartner, on_delete=models.CASCADE, related_name="zone_pricings")
+    zone = models.ForeignKey(DeliveryZone, on_delete=models.CASCADE, related_name="partner_pricings")
+    client_fee = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("2000"))
+    partner_cost = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("1500"))
+    estimated_delay_minutes = models.PositiveIntegerField(default=60)
+    max_weight_kg = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal("20"))
+    is_available = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["zone__name"]
+        unique_together = ["partner", "zone"]
+
+    @property
+    def margin(self):
+        return self.client_fee - self.partner_cost
+
+    def __str__(self):
+        return f"{self.partner.name} — {self.zone.name}"
+
+
 class Driver(models.Model):
     class AvailabilityStatus(models.TextChoices):
         AVAILABLE = 'available', 'Available'
@@ -82,9 +292,19 @@ class Driver(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='driver_profile')
+    # Le livreur appartient à un seul partenaire actif (spec §2, §30). Sans
+    # partenaire, il reste affectable manuellement (rétrocompatibilité).
+    partner = models.ForeignKey(
+        DeliveryPartner, on_delete=models.SET_NULL, null=True, blank=True, related_name='drivers'
+    )
     zone = models.ForeignKey(DeliveryZone, on_delete=models.SET_NULL, null=True, related_name='drivers')
     vehicle_type = models.CharField(max_length=100)
     availability_status = models.CharField(max_length=50, choices=AvailabilityStatus.choices, default=AvailabilityStatus.OFFLINE)
+    # Livreur suspendu : ne peut plus recevoir ni accepter de missions mais
+    # son historique est conservé (statut SUSPENDU, spec §7).
+    is_suspended = models.BooleanField(default=False)
+    # Capacité : nombre maximal de livraisons actives simultanées (§7).
+    max_active_deliveries = models.PositiveSmallIntegerField(default=2)
     # Position "libre" du livreur (hors course) : communiquée quand il se rend
     # disponible, elle sert à vérifier qu'il est proche de la boutique avant
     # de lui affecter une course (affectation = proximité géographique).
@@ -98,7 +318,33 @@ class Driver(models.Model):
         ordering = ['-created_at']
 
     def is_available(self):
-        return self.availability_status == self.AvailabilityStatus.AVAILABLE
+        return not self.is_suspended and self.availability_status == self.AvailabilityStatus.AVAILABLE
+
+    def active_deliveries_count(self):
+        """Nombre de livraisons en cours (non terminées) du livreur."""
+        return self.deliveries.exclude(
+            status__in=[
+                Delivery.Status.DELIVERED, Delivery.Status.DELIVERY_FAILED,
+                Delivery.Status.CUSTOMER_UNAVAILABLE, Delivery.Status.RETURNED,
+                Delivery.Status.CANCELLED,
+            ]
+        ).count()
+
+    def can_take_more(self):
+        return self.active_deliveries_count() < self.max_active_deliveries
+
+    def success_rate(self, days=90):
+        """Taux de réussite du livreur sur les N derniers jours (0-100)."""
+        cutoff = timezone.now() - timedelta(days=days)
+        base = self.deliveries.filter(created_at__gte=cutoff)
+        delivered = base.filter(status=Delivery.Status.DELIVERED).count()
+        failed = base.filter(
+            status__in=[Delivery.Status.DELIVERY_FAILED, Delivery.Status.CUSTOMER_UNAVAILABLE]
+        ).count()
+        settled = delivered + failed
+        if settled == 0:
+            return 100.0
+        return round(delivered / settled * 100, 1)
 
     def position(self):
         """Coordonnées libres (lat, lng) du livreur, ou None sans position."""
@@ -146,79 +392,389 @@ class Delivery(models.Model):
     class Status(models.TextChoices):
         PENDING = 'pending', 'Pending'
         ASSIGNED = 'assigned', 'Assigned'
+        ACCEPTED = 'accepted', 'Accepted'
+        PICKUP_PENDING = 'pickup_pending', 'Pickup Pending'
         PICKED_UP = 'picked_up', 'Picked Up'
+        IN_TRANSIT = 'in_transit', 'In Transit'
+        OUT_FOR_DELIVERY = 'out_for_delivery', 'Out For Delivery'
         DELIVERED = 'delivered', 'Delivered'
+        DELIVERY_FAILED = 'delivery_failed', 'Delivery Failed'
+        CUSTOMER_UNAVAILABLE = 'customer_unavailable', 'Customer Unavailable'
+        RETURN_REQUESTED = 'return_requested', 'Return Requested'
+        RETURNED = 'returned', 'Returned'
         CANCELLED = 'cancelled', 'Cancelled'
 
+    class FailureReason(models.TextChoices):
+        CUSTOMER_ABSENT = 'customer_absent', 'Client absent'
+        NUMBER_UNREACHABLE = 'number_unreachable', 'Numéro inaccessible'
+        WRONG_ADDRESS = 'wrong_address', 'Mauvaise adresse'
+        CUSTOMER_REFUSED = 'customer_refused', 'Client refuse'
+        PACKAGE_DAMAGED = 'package_damaged', 'Colis endommagé'
+        TRANSPORT_ISSUE = 'transport_issue', 'Problème de transport'
+        OTHER = 'other', 'Autre'
+
+    class ProofMethod(models.TextChoices):
+        OTP = 'otp', 'OTP'
+        SIGNATURE = 'signature', 'Signature'
+        PHOTO = 'photo', 'Photo'
+        CLIENT_CONFIRMATION = 'client_confirmation', 'Confirmation client'
+
+    class ReturnReason(models.TextChoices):
+        CUSTOMER_ABSENT = 'customer_absent', 'Client absent'
+        CUSTOMER_REFUSED = 'customer_refused', 'Client refuse'
+        WRONG_ADDRESS = 'wrong_address', 'Mauvaise adresse'
+        PACKAGE_DAMAGED = 'package_damaged', 'Colis endommagé'
+        SHIPPING_ERROR = 'shipping_error', 'Erreur d\'envoi'
+        OTHER = 'other', 'Autre'
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Référence lisible DLV-YYYYMMDD-XXXXXX (spec §5), générée automatiquement.
+    reference = models.CharField(max_length=30, unique=True, blank=True, default="")
     order = models.OneToOneField('Order', on_delete=models.CASCADE, related_name='delivery')
+    # Partenaire logistique en charge de la course (spec §2). Affecté
+    # automatiquement à la commande ou manuellement par un admin.
+    partner = models.ForeignKey(
+        DeliveryPartner, on_delete=models.SET_NULL, null=True, blank=True, related_name='deliveries'
+    )
     driver = models.ForeignKey(Driver, on_delete=models.SET_NULL, null=True, blank=True, related_name='deliveries')
     status = models.CharField(max_length=50, choices=Status.choices, default=Status.PENDING)
+    # Horodatage de chaque étape de la timeline (spec §28). `picked_up_at` et
+    # `delivered_at` existaient déjà ; on garde ces noms pour la rétrocompat.
+    assigned_at = models.DateTimeField(null=True, blank=True)
+    accepted_at = models.DateTimeField(null=True, blank=True)
     picked_up_at = models.DateTimeField(null=True, blank=True)
+    in_transit_at = models.DateTimeField(null=True, blank=True)
+    out_for_delivery_at = models.DateTimeField(null=True, blank=True)
     delivered_at = models.DateTimeField(null=True, blank=True)
+    failed_at = models.DateTimeField(null=True, blank=True)
+    return_requested_at = models.DateTimeField(null=True, blank=True)
+    returned_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    # Motif d'échec / de refus / de retour (spec §16, §17).
+    failure_reason = models.CharField(max_length=50, choices=FailureReason.choices, blank=True, default="")
+    failure_comment = models.TextField(blank=True, default="")
+    return_reason = models.CharField(max_length=50, choices=ReturnReason.choices, blank=True, default="")
+    refuse_reason = models.CharField(max_length=50, blank=True, default="")
+    # Preuve de livraison (spec §15) : méthode, référence (photo/signature),
+    # géolocalisation autorisée et commentaire.
+    proof_method = models.CharField(max_length=30, choices=ProofMethod.choices, blank=True, default="")
+    proof_note = models.TextField(blank=True, default="")
+    proof_photo = models.CharField(max_length=500, blank=True, default="")
+    proof_latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    proof_longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    proof_recorded_at = models.DateTimeField(null=True, blank=True)
     confirmation_otp_hash = models.CharField(max_length=64, blank=True, default="")
     confirmation_otp_expires_at = models.DateTimeField(null=True, blank=True)
     confirmation_attempts = models.PositiveSmallIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    def assign_driver(self, driver):
+    class Meta:
+        ordering = ['-created_at']
+
+    @classmethod
+    def next_reference(cls):
+        """Génère la prochaine référence DLV-YYYYMMDD-XXXXXX de la journée."""
+        today = timezone.localdate()
+        prefix = f"DLV-{today.strftime('%Y%m%d')}-"
+        last = (
+            cls.objects.filter(reference__startswith=prefix)
+            .order_by("-reference")
+            .values_list("reference", flat=True)
+            .first()
+        )
+        sequence = int(last.split("-")[-1]) + 1 if last else 1
+        return f"{prefix}{sequence:06d}"
+
+    def save(self, *args, **kwargs):
+        if not self.reference:
+            self.reference = self.next_reference()
+        super().save(*args, **kwargs)
+
+    def record_event(self, action, user=None, actor_role="", previous_status=None,
+                     new_status=None, comment="", metadata=None):
+        """Trace une étape de la timeline de la livraison (spec §28).
+
+        Chaque événement enregistre l'acteur, son rôle, l'action, l'ancienne et
+        la nouvelle valeur, le commentaire et une référence (la livraison).
+        """
+        from apps.users.models import Role
+
+        if not actor_role and user and user.is_authenticated:
+            first_role = user.user_roles.select_related("role").first()
+            actor_role = first_role.role.name if first_role else ""
+        return DeliveryEvent.objects.create(
+            delivery=self,
+            actor=user if (user and user.is_authenticated) else None,
+            actor_role=actor_role,
+            action=action,
+            previous_status=previous_status or self.status,
+            new_status=new_status or self.status,
+            comment=comment,
+            metadata=metadata or {},
+        )
+
+    def assign_partner(self, partner, user=None):
+        """Affecte l'entreprise partenaire responsable de la course."""
+        if self.status != self.Status.PENDING:
+            return
+        old = self.status
+        self.partner = partner
+        self.status = self.Status.ASSIGNED
+        self.assigned_at = timezone.now()
+        self.save()
+        self.record_event(
+            "pending→assigned", user=user, actor_role="admin",
+            previous_status=old, new_status=self.status,
+            metadata={"partner": str(partner.id) if partner else None},
+        )
+        if partner:
+            self._notify_partner_new_delivery()
+
+    def _notify_partner_new_delivery(self):
+        """Prévient l'entreprise partenaire qu'une course lui est confiée.
+
+        Si le compte utilisateur du partenaire est lié (Espace Partenaire),
+        un Notification interne est créée ; sinon on retombe sur un email
+        direct au contact (jamais bloquant).
+        """
+        message = (
+            f"Bonjour,\n\nUne nouvelle livraison ({self.reference}) vous est confiée "
+            f"pour la commande {str(self.order.id)[:8]}.\n"
+            "Connectez-vous à votre Espace Partenaire pour affecter un livreur.\n\n"
+            "Merci."
+        )
+        partner = self.partner
+        if partner and partner.user_id:
+            from apps.monetization.models import Notification
+
+            Notification.objects.create(
+                user=partner.user,
+                channel=Notification.Channel.EMAIL,
+                subject="Nouvelle livraison à traiter",
+                message=message,
+                metadata={"delivery_ref": self.reference, "partner": str(partner.id)},
+            ).send()
+        elif partner and partner.contact_email:
+            from django.core.mail import send_mail
+
+            send_mail(
+                "Nouvelle livraison à traiter",
+                message,
+                settings.DEFAULT_FROM_EMAIL,
+                [partner.contact_email],
+                fail_silently=True,
+            )
+
+    def assign_driver(self, driver, user=None):
+        """Affecte un livreur à la livraison (par le partenaire ou un admin).
+
+        La course reste « assigned » tant que le livreur n'a pas accepté la
+        mission. Renvoie la livraison pour chaîner.
+        """
+        old = self.status
         self.driver = driver
         self.status = self.Status.ASSIGNED
+        if self.assigned_at is None:
+            self.assigned_at = timezone.now()
+        if self.partner_id is None and driver and driver.partner_id:
+            self.partner_id = driver.partner_id
         self.save()
+        self.record_event(
+            "assigned", user=user, actor_role="partner" if user and user.is_partner() else "admin",
+            previous_status=old, new_status=self.status,
+            metadata={"driver": str(driver.id) if driver else None},
+        )
         self._notify_driver_assigned()
+        return self
 
     def _notify_driver_assigned(self):
         from apps.monetization.models import Notification
 
-        subject = "Nouvelle course qui vous a été affectée"
+        subject = "Nouvelle mission qui vous est affectée"
         message = (
             f"Bonjour {self.driver.user.first_name},\n\n"
-            f"Une nouvelle course vous a été affectée (commande {self.order.id}).\n"
-            "Connectez-vous à votre espace livreur pour voir le détail et démarrer la livraison.\n\n"
+            f"Une nouvelle mission vous est affectée — livraison {self.reference} "
+            f"(commande {str(self.order.id)[:8]}).\n"
+            "Connectez-vous à votre espace livreur pour accepter et démarrer.\n\n"
             "Merci."
         )
-        notification = Notification.objects.create(
+        Notification.objects.create(
             user=self.driver.user,
             channel=Notification.Channel.EMAIL,
             subject=subject,
             message=message,
             metadata={"delivery_id": str(self.id), "order_id": str(self.order.id)},
-        )
-        notification.send()
+        ).send()
 
     def auto_assign(self):
-        """
-        Affecte automatiquement le livreur disponible ayant le moins de
-        courses actives (assigned/picked_up) en ce moment — pour ne pas
-        dépendre d'une affectation manuelle à chaque commande, ce qui ne
-        tient pas à l'échelle (des centaines de commandes). Ne fait rien
-        si un livreur est déjà affecté, ou si aucun n'est disponible : la
-        course reste alors "pending", affectable à la main en filet de
-        secours (menu déroulant déjà existant côté commerçant/admin).
+        """Affecte automatiquement le meilleur livreur disponible.
+
+        Si un partenaire est en charge, la sélection se fait parmi SES livreurs
+        (sinon parmi tous). Rang : dispo, capacité restante, proximité de la
+        boutique, charge actuelle. Ne fait rien si aucun n'est disponible.
         """
         if self.driver_id is not None:
             return None
+        driver = self.suggested_driver()
+        if driver:
+            self.assign_driver(driver)
+        return driver
 
-        candidate = (
-            Driver.objects.filter(availability_status=Driver.AvailabilityStatus.AVAILABLE)
-            .annotate(
-                active_count=models.Count(
-                    "deliveries",
-                    filter=models.Q(deliveries__status__in=[self.Status.ASSIGNED, self.Status.PICKED_UP]),
-                )
-            )
-            .order_by("active_count")
-            .first()
+    def suggested_driver(self, limit=5):
+        """Meilleurs livreurs candidats (spec §7) — proximité, zone, dispo, charge."""
+        store = self.order.store
+        queryset = Driver.objects.filter(
+            availability_status=Driver.AvailabilityStatus.AVAILABLE,
+            is_suspended=False,
         )
-        if candidate:
-            self.assign_driver(candidate)
-        return candidate
+        if self.partner_id:
+            queryset = queryset.filter(partner_id=self.partner_id)
+        queryset = queryset.annotate(
+            active_count=models.Count(
+                "deliveries",
+                filter=models.Q(
+                    deliveries__status__in=[
+                        self.Status.ASSIGNED, self.Status.ACCEPTED, self.Status.PICKUP_PENDING,
+                        self.Status.PICKED_UP, self.Status.IN_TRANSIT, self.Status.OUT_FOR_DELIVERY,
+                    ]
+                ),
+            )
+        ).order_by("active_count")
+        candidates = list(queryset[:limit])
+        if not candidates:
+            return None
+        candidates.sort(
+            key=lambda d: (
+                not d.can_take_more(),
+                d.distance_to_store_km(store) if d.distance_to_store_km(store) is not None else 9999,
+                d.active_deliveries_count,
+                d.success_rate(),
+            )
+        )
+        return candidates[0] if candidates[0].can_take_more() else candidates[0]
 
-    def mark_delivered(self):
-        self.status = self.Status.DELIVERED
-        self.delivered_at = timezone.now()
+    def notify_assigned_partner(self, user=None):
+        """Sert au flux d'acceptation : notification/suivi après affectation."""
+        self.record_event("assigned", user=user)
+
+    def assign(self, driver_id, user):
+        return self.assign_driver(driver_id, user)
+
+    def _transition_to(self, new_status, user=None, actor_role="", comment="", metadata=None):
+        """Applique une transition de statut et la trace."""
+        old = self.status
+        self.status = new_status
+        now = timezone.now()
+        stamps = {
+            self.Status.ASSIGNED: "assigned_at",
+            self.Status.ACCEPTED: "accepted_at",
+            self.Status.PICKED_UP: "picked_up_at",
+            self.Status.IN_TRANSIT: "in_transit_at",
+            self.Status.OUT_FOR_DELIVERY: "out_for_delivery_at",
+            self.Status.DELIVERED: "delivered_at",
+            self.Status.DELIVERY_FAILED: "failed_at",
+            self.Status.CUSTOMER_UNAVAILABLE: "failed_at",
+            self.Status.RETURN_REQUESTED: "return_requested_at",
+            self.Status.RETURNED: "returned_at",
+            self.Status.CANCELLED: "cancelled_at",
+        }
+        field = stamps.get(new_status)
+        if field:
+            setattr(self, field, now)
         self.save()
+        self.record_event(
+            "status_changed", user=user, actor_role=actor_role,
+            previous_status=old, new_status=new_status,
+            comment=comment, metadata=metadata or {},
+        )
+        return old
+
+    def accept(self, user):
+        if self.status != self.Status.ASSIGNED:
+            raise ValueError("La mission doit être affectée avant d'être acceptée.")
+        if self.driver and self.driver.user_id != user.id:
+            raise PermissionError("Seul le livreur affecté peut accepter cette mission.")
+        self._transition_to(self.Status.ACCEPTED, user=user, actor_role="driver", comment="Mission acceptée")
+        self.broadcast_status(f"{self.reference} : mission acceptée par le livreur.")
+
+    def refuse(self, user, reason, comment=""):
+        """Le livreur refuse la mission : la livraison redevient affectable."""
+        if self.status != self.Status.ASSIGNED:
+            raise ValueError("La mission doit être affectée pour être refusée.")
+        if self.driver and self.driver.user_id != user.id:
+            raise PermissionError("Seul le livreur affecté peut refuser cette mission.")
+        self.refuse_reason = reason
+        self.failure_comment = comment or self.failure_comment
+        driver = self.driver
+        old_status = self.status
+        self.driver = None
+        self.status = self.Status.ASSIGNED
+        self.save()
+        DeliveryEvent.objects.create(
+            delivery=self,
+            actor=user,
+            actor_role="driver",
+            action="refused",
+            previous_status=old_status,
+            new_status=self.status,
+            comment=f"Refus ({reason}) : {comment}".strip(),
+        )
+        # La course reste affectable : tentative d'auto-réaffectation (§29).
+        if self.partner_id:
+            self.auto_assign()
+
+    def mark_delivered(self, user=None, actor_role="", proof_method="", proof_note="",
+                       latitude=None, longitude=None):
+        self.proof_method = proof_method or self.ProofMethod.CLIENT_CONFIRMATION
+        self.proof_note = proof_note or self.proof_note
+        self.proof_latitude = latitude or self.proof_latitude
+        self.proof_longitude = longitude or self.proof_longitude
+        self.proof_recorded_at = timezone.now()
+        self.confirmation_otp_hash = ""
+        self.confirmation_otp_expires_at = None
+        self._transition_to(self.Status.DELIVERED, user=user, actor_role=actor_role,
+                            comment="Livraison confirmée.")
+        self.order.change_status(Order.Status.DELIVERED, changed_by=user or self.order.customer)
+        return self
+
+    def mark_failed(self, user=None, actor_role="driver", reason=None, comment="", latitude=None, longitude=None):
+        if reason not in self.FailureReason.values:
+            raise ValueError("Motif d'échec obligatoire.")
+        self.failure_reason = reason
+        self.failure_comment = comment
+        new_status = (
+            self.Status.CUSTOMER_UNAVAILABLE if reason == self.FailureReason.CUSTOMER_ABSENT
+            else self.Status.DELIVERY_FAILED
+        )
+        self._transition_to(new_status, user=user, actor_role=actor_role,
+                            comment=f"{comment} Motif : {reason}".strip())
+        self.broadcast_status("Livraison signalée comme échouée par le livreur.")
+
+    def request_return(self, user=None, actor_role="driver", reason=None, comment=""):
+        if reason and reason not in self.ReturnReason.values:
+            raise ValueError("Motif de retour invalide.")
+        self.return_reason = reason or self.return_reason
+        self._transition_to(self.Status.RETURN_REQUESTED, user=user, actor_role=actor_role,
+                            comment=f"Retour demandé{(' : ' + reason) if reason else ''}")
+        return self
+
+    def mark_returned(self, user=None, actor_role="driver", comment=""):
+        self._transition_to(self.Status.RETURNED, user=user, actor_role=actor_role,
+                            comment=comment or "Colis retourné au vendeur.")
+        self.broadcast_status("Le colis a été retourné au vendeur.")
+
+    def cancel(self, user=None, comment=""):
+        """Annule la course (appelé quand le client annule sa commande) et prévient le livreur s'il en avait déjà un."""
+        had_driver = self.driver_id is not None
+        parent = None
+        if self.status != self.Status.CANCELLED:
+            parent = self._transition_to(self.Status.CANCELLED, user=user, actor_role="admin",
+                                         comment=comment or "Annulation")
+        self.broadcast_status("La livraison de votre commande a été annulée.")
+        if had_driver:
+            self._notify_driver_cancelled()
+        return parent
 
     def generate_confirmation_otp(self):
         """Génère un code de confirmation à 6 chiffres pour la remise au client.
@@ -318,11 +874,12 @@ class Delivery(models.Model):
         self.refresh_from_db(fields=["driver", "status", "picked_up_at", "delivered_at"])
         publish_delivery_event(self.id, "status", self.event_payload(message=message))
 
-    def cancel(self):
+    def cancel(self, user=None, comment=""):
         """Annule la course (appelé quand le client annule sa commande) et prévient le livreur s'il en avait déjà un."""
         had_driver = self.driver_id is not None
-        self.status = self.Status.CANCELLED
-        self.save(update_fields=["status"])
+        if self.status != self.Status.CANCELLED:
+            self._transition_to(self.Status.CANCELLED, user=user, actor_role="admin",
+                                comment=comment or "Annulation")
         self.broadcast_status("La livraison de votre commande a été annulée.")
         if had_driver:
             self._notify_driver_cancelled()
@@ -500,3 +1057,117 @@ class OrderHistory(models.Model):
 
     def __str__(self):
         return f"Order {self.order.id}: {self.previous_status} → {self.new_status}"
+
+
+class DeliveryEvent(models.Model):
+    """Étape de la timeline d'une livraison (spec §28).
+
+    Horizon temporel complet : chaque changement de statut, affectation, refus,
+    échec, retour, preuve, d'acteur (admin/partenaire/livreur/client) et le
+    commentaire associé, horodatés. Sert d'audit et alimente la frise affichée
+    dans l'Espace Partenaire.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    delivery = models.ForeignKey(Delivery, on_delete=models.CASCADE, related_name='events')
+    actor = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='delivery_events'
+    )
+    actor_role = models.CharField(max_length=30, default="", blank=True)
+    action = models.CharField(max_length=50)
+    previous_status = models.CharField(max_length=50, default="", blank=True)
+    new_status = models.CharField(max_length=50, default="", blank=True)
+    comment = models.TextField(default="", blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"{self.delivery.reference} : {self.action}"
+
+
+class PartnerInvoice(models.Model):
+    """Facture d'un partenaire (spec §19-§22).
+
+    Établie sur une période, à partir des livraisons DELIVERED/MARKETPLACE
+    payées à ce partenaire. `total_due` = somme des courses facturables,
+    `collection_fees` = commission prélevée par Sunu Mall, `balance` =
+    montant net à régler. La réconciliation (spec §21) compare le total des
+    course facturables à la période (recompute) au montant retenu.
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = 'draft', 'Brouillon'
+        PENDING = 'pending', 'En attente de paiement'
+        PAID = 'paid', 'Payée'
+        CONTESTED = 'contested', 'Contestée'
+
+    class PeriodCode(models.TextChoices):
+        DAILY = 'daily', 'Journalier'
+        WEEKLY = 'weekly', 'Hebdomadaire'
+        MONTHLY = 'monthly', 'Mensuel'
+
+    partner = models.ForeignKey(DeliveryPartner, on_delete=models.CASCADE, related_name='invoices')
+    reference = models.CharField(max_length=30, unique=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    period_start = models.DateField()
+    period_end = models.DateField()
+    due_date = models.DateField(null=True, blank=True)
+    # Taux effectifs appliqués (figés au moment de l'émission).
+    marketplace_rate = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.10'))
+    on_demand_rate = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.15'))
+    # Montants en FCFA.
+    marketplace_deliveries_count = models.PositiveIntegerField(default=0)
+    on_demand_deliveries_count = models.PositiveIntegerField(default=0)
+    marketplace_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    on_demand_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    collection_fees = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    total_due = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    # Réconciliation : montant facturable recalculé sur la période vs montant
+    # retenu à l'émission ; écart positif = somme due en plus au partenaire.
+    recon_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    recon_diff = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    recon_date = models.DateTimeField(null=True, blank=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-period_end']
+
+    @classmethod
+    def next_reference(cls, period_start):
+        """Génère une référence INV-YYYYMM-XXXXX par mois de période."""
+        prefix = f"INV-{period_start.strftime('%Y%m')}-"
+        last = (
+            cls.objects.filter(reference__startswith=prefix)
+            .order_by("-reference")
+            .values_list("reference", flat=True)
+            .first()
+        )
+        sequence = int(last.split("-")[-1]) + 1 if last else 1
+        return f"{prefix}{sequence:05d}"
+
+    def save(self, *args, **kwargs):
+        if not self.reference:
+            self.reference = self.next_reference(self.period_start)
+        super().save(*args, **kwargs)
+
+    @property
+    def balance(self):
+        return self.total_due - self.collection_fees
+
+    def mark_paid(self, user=None):
+        from apps.security.utils import log_security_event
+
+        self.status = self.Status.PAID
+        self.paid_at = timezone.now()
+        self.save()
+        log_security_event(
+            "PARTNER_INVOICE_PAID", device=user, metadata={"invoice": self.reference, "amount": str(self.balance)},
+        )
+
+    def __str__(self):
+        return f"{self.reference} ({self.partner.name})"

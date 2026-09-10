@@ -36,6 +36,11 @@ INSTALLED_APPS = [
     "apps.auth",
     "apps.kyc",
     "apps.commissions",
+    "apps.security",
+    "apps.ops",
+    "apps.complaints",
+    "apps.search",
+    "apps.reports",
 ]
 
 MIDDLEWARE = [
@@ -47,6 +52,8 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "apps.security.middleware.RequestIDMiddleware",
+    "apps.security.middleware.MaintenanceModeMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -157,11 +164,48 @@ COMMISSION_GRACE_DAYS = config("COMMISSION_GRACE_DAYS", default=7, cast=int)
 # Délai de libération des fonds d'une vente livrée (pending → available, §9).
 COMMISSION_RELEASE_DAYS = config("COMMISSION_RELEASE_DAYS", default=3, cast=int)
 
+# --- Abonnement vendeur (apps/monetization) ---
+# Période de grâce après expiration d'un abonnement STARTER/PRO/BUSINESS
+# pendant laquelle le vendeur reçoit encore des commandes et peut modifier
+# ses produits (spec monétisation §11). Ne jamais coder en dur.
+SUBSCRIPTION_GRACE_PERIOD_DAYS = config("SUBSCRIPTION_GRACE_PERIOD_DAYS", default=7, cast=int)
+# Rappels « votre abonnement expire bientôt » envoyés avant la fin de période,
+# configurables (jours avant expiration). Tâche Celery quotidienne.
+SUBSCRIPTION_REMINDER_DAYS = [int(d) for d in config(
+    "SUBSCRIPTION_REMINDER_DAYS", default="7,3,1", cast=str
+).split(",") if d.strip().isdigit()]
+# Secrets des fournisseurs de paiement pour la validation des webhooks.
+# Si vide, les webhooks ne sont acceptés qu'en mode sandbox (PAYMENT_SANDBOX).
+PAYMENT_PROVIDERS = {
+    "wave": config("WAVE_WEBHOOK_SECRET", default=""),
+    "orange_money": config("ORANGE_MONEY_WEBHOOK_SECRET", default=""),
+}
+
 # --- Confirmation de livraison par code OTP ---
 # Le client valide la réception d'une commande avec un code à 6 chiffres
 # que le livreur lui remet physiquement. Validité courte et essais limités.
 CONFIRMATION_OTP_TTL_MINUTES = config("CONFIRMATION_OTP_TTL_MINUTES", default=30, cast=int)
 MAX_OTP_ATTEMPTS = config("MAX_OTP_ATTEMPTS", default=5, cast=int)
+
+# --- Journal de sécurité (apps/security) ---
+# Durée de rétention des journaux d'actions sensibles avant leur purge
+# automatique (politique de conservation des données, spec §17).
+SECURITY_LOG_RETENTION_DAYS = config("SECURITY_LOG_RETENTION_DAYS", default=365, cast=int)
+# Mise hors service du journal (tests, démo) sans restaurer l'ancien code.
+DISABLE_SECURITY_LOGS = config("DISABLE_SECURITY_LOGS", default=False, cast=bool)
+
+# --- Vérification du téléphone par code OTP ---
+# Code à 6 chiffres à durée de vie courte et essais limités. L'envoi SMS est
+# branché sur le canal Notification.SMS (apps/monetization) : sans fournisseur
+# configuré, le code est tracé et loggé en console — voir
+# apps/auth/views.RequestPhoneOTPView pour le branchement du fournisseur.
+PHONE_OTP_TTL_MINUTES = config("PHONE_OTP_TTL_MINUTES", default=10, cast=int)
+PHONE_OTP_MAX_ATTEMPTS = config("PHONE_OTP_MAX_ATTEMPTS", default=5, cast=int)
+# REVEAL : retourner le code OTP dans la réponse de la requête d'envoi.
+# STRICTEMENT réservé au développement/test (env PHONE_OTP_REVEAL_CODE=true
+# dans config/settings/dev.py) — JAMAIS en production : le code doit arriver
+# uniquement par SMS sur le téléphone de l'utilisateur.
+PHONE_OTP_REVEAL_CODE = config("PHONE_OTP_REVEAL_CODE", default=False, cast=bool)
 
 # --- Affectation des courses ---
 # Un livreur ne reçoit une commande que s'il est à moins de ce rayon (km) de

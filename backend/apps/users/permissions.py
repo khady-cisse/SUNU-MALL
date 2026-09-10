@@ -6,12 +6,12 @@ from apps.users.models import Role
 
 
 class IsAdmin(permissions.BasePermission):
-    """Permission pour les administrateurs uniquement."""
+    """Permission pour les administrateurs (rôle maître ou spécialisé)."""
     def has_permission(self, request, view):
         return (
             request.user
             and request.user.is_authenticated
-            and request.user.has_role(Role.RoleName.ADMIN)
+            and request.user.is_admin()
         )
 
 
@@ -72,7 +72,7 @@ class IsOwnerOrAdmin(permissions.BasePermission):
     """
     def has_object_permission(self, request, view, obj):
         # Admin peut tout faire
-        if request.user.has_role(Role.RoleName.ADMIN):
+        if request.user.is_admin():
             return True
         
         # Vérifier si c'est le propriétaire
@@ -92,7 +92,7 @@ class IsStoreOwnerOrAdmin(permissions.BasePermission):
     """
     def has_object_permission(self, request, view, obj):
         # Admin peut tout faire
-        if request.user.has_role(Role.RoleName.ADMIN):
+        if request.user.is_admin():
             return True
         
         # Récupérer la boutique

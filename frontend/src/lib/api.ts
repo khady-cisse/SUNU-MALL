@@ -19,6 +19,36 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Extrait un message lisible d'une erreur DRF (detail, non_field_errors,
+ * champ en échec…) pour l'afficher tel quel dans l'interface.
+ */
+export function apiErrorMessage(err: unknown, fallback = "Une erreur est survenue."): string {
+  if (!(err instanceof ApiError)) return "Erreur réseau.";
+  const data = err.data;
+  if (typeof data === "string") return data;
+  if (data && typeof data === "object") {
+    const record = data as Record<string, unknown>;
+    const read = (value: unknown): string | null => {
+      if (typeof value === "string") return value;
+      if (Array.isArray(value)) {
+        const texts = value.filter((v): v is string => typeof v === "string");
+        return texts.length ? texts.join(" ") : null;
+      }
+      return null;
+    };
+    for (const key of ["detail", "non_field_errors"]) {
+      const text = read(record[key]);
+      if (text) return text;
+    }
+    for (const [field, value] of Object.entries(record)) {
+      const text = read(value);
+      if (text) return `${field} : ${text}`;
+    }
+  }
+  return fallback;
+}
+
 async function refreshAccessToken(): Promise<string | null> {
   const { refreshToken, setTokens, logout } = useAuthStore.getState();
   if (!refreshToken) return null;

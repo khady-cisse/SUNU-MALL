@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
-import { Mail, PackageSearch, Star, Store as StoreIcon } from "lucide-react";
+import { BadgeCheck, Mail, PackageSearch, Star, Store as StoreIcon } from "lucide-react";
 import { useAsync } from "@/hooks/useAsync";
 import * as catalogApi from "@/api/catalog";
 import { ProductCard } from "@/components/marketplace/ProductCard";
@@ -65,6 +65,11 @@ export default function BoutiqueDetailPage() {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="font-display text-2xl font-bold">{store.name}</h1>
+            {store.is_verified_seller && (
+              <Badge variant="success">
+                <BadgeCheck className="h-3.5 w-3.5" /> Vérifié
+              </Badge>
+            )}
             {store.status !== "active" && (
               <Badge variant={store.status === "suspended" ? "danger" : "warning"}>
                 {store.status === "suspended" ? "Suspendue" : "En attente"}

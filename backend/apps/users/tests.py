@@ -209,3 +209,45 @@ class RBACAPITests(TestCase):
         self.assertIn('roles', response.data)
         self.assertIn('permissions', response.data)
         self.assertIn('admin', response.data['roles'])
+
+
+class CreateAdminCommandTests(TestCase):
+    """Tests de la commande `manage.py create_admin`."""
+
+    def setUp(self):
+        from django.core.management import call_command
+        self.call_command = call_command
+
+    def test_creates_verified_admin_with_role(self):
+        self.call_command(
+            'create_admin',
+            email='admin@sunumall.com',
+            password='Admin@12345',
+            username='admin@sunumall.com',
+        )
+        user = User.objects.get(email='admin@sunumall.com')
+        self.assertTrue(user.is_verified)
+        self.assertTrue(user.is_active)
+        self.assertTrue(user.has_role(Role.RoleName.ADMIN))
+        self.assertTrue(user.check_password('Admin@12345'))
+
+    def test_is_idempotent_and_restores_verified(self):
+        user = User.objects.create_user(
+            username='admin@sunumall.com', email='admin@sunumall.com',
+            password='oldpass123', is_verified=False,
+        )
+        self.call_command(
+            'create_admin', email='admin@sunumall.com', password='newpass123',
+        )
+        user.refresh_from_db()
+        self.assertTrue(user.is_verified)
+        self.assertTrue(user.check_password('newpass123'))
+        self.assertEqual(User.objects.filter(email='admin@sunumall.com').count(), 1)
+
+    def test_super_admin_flag_grants_both_roles(self):
+        self.call_command(
+            'create_admin', email='admin@sunumall.com', password='Admin@12345', super_admin=True,
+        )
+        user = User.objects.get(email='admin@sunumall.com')
+        self.assertTrue(user.has_role(Role.RoleName.ADMIN))
+        self.assertTrue(user.has_role(Role.RoleName.SUPER_ADMIN))

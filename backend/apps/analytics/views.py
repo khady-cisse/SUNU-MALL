@@ -13,7 +13,7 @@ from .models import Report, TrafficStatistic, SalesStatistic
 from .serializers import ReportSerializer, TrafficStatisticSerializer, SalesStatisticSerializer
 from apps.catalog.models import Review, Store
 from apps.orders.models import Order
-from apps.users.models import Role
+
 
 
 class ReportViewSet(viewsets.ReadOnlyModelViewSet):
@@ -23,7 +23,7 @@ class ReportViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.has_role(Role.RoleName.ADMIN):
+        if user.is_admin():
             return Report.objects.all()
         return Report.objects.filter(generated_by=user)
 
@@ -35,7 +35,7 @@ class TrafficStatisticViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.has_role(Role.RoleName.ADMIN):
+        if user.is_admin():
             return TrafficStatistic.objects.all()
         return TrafficStatistic.objects.filter(store__owner=user)
 
@@ -50,7 +50,7 @@ class SalesStatisticViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.has_role(Role.RoleName.ADMIN):
+        if user.is_admin():
             return SalesStatistic.objects.all()
         return SalesStatistic.objects.filter(store__owner=user)
 
@@ -69,7 +69,7 @@ class StoreSummaryView(APIView):
 
     def get(self, request):
         store = get_object_or_404(Store, pk=request.query_params.get("store"))
-        if store.owner_id != request.user.id and not request.user.has_role(Role.RoleName.ADMIN):
+        if store.owner_id != request.user.id and not request.user.is_admin():
             raise PermissionDenied("Vous ne pouvez consulter que les statistiques de votre propre boutique.")
 
         since = timezone.now() - timedelta(days=30)

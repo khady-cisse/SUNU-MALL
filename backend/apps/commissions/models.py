@@ -32,7 +32,7 @@ class SellerSubscription(models.Model):
 
     Cycle de vie : chaque vendeur démarre avec 30 jours d'essai à 0 % de
     commission (trial_started_at = création du compte, trial_ends_at = +30 j).
-    À la fin de l'essai il choisit un plan (BASIC/PRO/BUSINESS) : statut
+    À la fin de l'essai il choisit un plan (STARTER/PRO/BUSINESS) : statut
     ACTIVE et période starts_at/ends_at renseignées. Passée la fin de période
     (ou de l'essai), le vendeur reste autorisé à vendre pendant une période de
     grâce configurable (COMMISSION_GRACE_DAYS) au taux de son dernier plan ;
@@ -41,7 +41,7 @@ class SellerSubscription(models.Model):
     """
 
     class Plan(models.TextChoices):
-        BASIC = "BASIC", "BASIC"
+        STARTER = "STARTER", "STARTER"
         PRO = "PRO", "PRO"
         BUSINESS = "BUSINESS", "BUSINESS"
 
@@ -50,6 +50,7 @@ class SellerSubscription(models.Model):
         ACTIVE = "active", "Active"
         EXPIRED = "expired", "Expired"
         CANCELLED = "cancelled", "Cancelled"
+        SUSPENDED = "suspended", "Suspended"
 
     seller = models.OneToOneField(
         User, on_delete=models.CASCADE, related_name="commission_subscription"
@@ -145,6 +146,9 @@ class SellerSubscription(models.Model):
         jamais en dessous de son offre la plus accessible).
         """
         at = at or timezone.now()
+        if self.status == self.Status.SUSPENDED:
+            # Suspension (admin) : coupe immédiatement la vente, sans grâce.
+            return self._fallback_rate(), self.plan, False
         if self.trial_active(at):
             return Decimal("0"), "", True
         if self.period_active(at):
@@ -164,6 +168,8 @@ class SellerSubscription(models.Model):
     def effective_status(self):
         """Statut réel calculé, indépendant du statut stocké (source de vérité)."""
         now = timezone.now()
+        if self.status == self.Status.SUSPENDED:
+            return self.Status.SUSPENDED
         if self.trial_active(now):
             return self.Status.TRIAL
         if self.period_active(now):
@@ -188,6 +194,11 @@ class SellerSubscription(models.Model):
     def mark_cancelled(self):
         if self.status != self.Status.CANCELLED:
             self.status = self.Status.CANCELLED
+            self.save(update_fields=["status"])
+
+    def mark_suspended(self):
+        if self.status != self.Status.SUSPENDED:
+            self.status = self.Status.SUSPENDED
             self.save(update_fields=["status"])
 
     def __str__(self):
@@ -275,7 +286,7 @@ class CommissionTransaction(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     order = models.ForeignKey(Order, on_delete=models.PROTECT, related_name="commission_transactions")
     seller = models.ForeignKey(User, on_delete=models.PROTECT, related_name="commission_transactions")
-    # Instantané du plan au moment de la vente (BASIC/PRO/BUSINESS ou essai).
+    # Instantané du plan au moment de la vente (STARTER/PRO/BUSINESS ou essai).
     plan = models.CharField(max_length=20, blank=True)
     gross_amount = models.DecimalField(max_digits=14, decimal_places=2)   # éligible : hors livraison
     commission_rate = models.DecimalField(max_digits=5, decimal_places=2)  # jamais recalculé après coup

@@ -15,6 +15,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 from apps.users.models import User, Role, UserRole
 from apps.catalog.models import Product, ProductVariant, Store
+from apps.kyc.models import SellerKYC
 
 # 1x1 PNG transparent minimal, valide pour Pillow.
 TINY_PNG = (
@@ -54,6 +55,53 @@ class CatalogOwnershipTests(TestCase):
         role = Role.objects.get(name=Role.RoleName.MERCHANT)
         UserRole.objects.create(user=user, role=role)
         return user
+
+    def _verify_kyc(self, user):
+        return SellerKYC.objects.create(
+            seller=user, document_type="cni",
+            document_front="kyc/sellers/1/f.jpg", document_back="kyc/sellers/1/b.jpg",
+            status=SellerKYC.Status.VERIFIED, submitted_at=None,
+        )
+
+    def _create_store_via_api(self, owner, name):
+        self._verify_kyc(owner)
+        self.client.force_authenticate(owner)
+        return self.client.post("/api/catalog/stores/", {"name": name}, format="json")
+
+    def test_merchant_can_create_one_store(self):
+        # Sans boutique : la création de sa première (et seule) boutique réussit.
+        fresh = self._make_merchant("fresh@example.com")
+        response = self._create_store_via_api(fresh, "Ma première boutique")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(fresh.stores.count(), 1)
+
+    def test_merchant_cannot_create_a_second_store(self):
+        # Règle « 1 vendeur = 1 boutique » (spec §1), appliquée côté backend :
+        # un commerçant qui possède déjà une boutique n'en crée pas une seconde,
+        # quel que soit le statut de la boutique existante.
+        response = self._create_store_via_api(self.owner, "Deuxième boutique")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.owner.stores.count(), 1)
+
+    def test_merchant_can_recreate_store_after_deleting_the_previous_one(self):
+        # Supprimer sa boutique libère le droit d'en rouvrir une nouvelle.
+        self.store.delete()
+        response = self._create_store_via_api(self.owner, "Nouvelle boutique")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(self.owner.stores.count(), 1)
+
+    def test_admin_can_create_a_store_for_a_seller(self):
+        # L'admin reste libre (gestion manuelle d'un compte vendeur).
+        admin = User.objects.create_user(username="admin@example.com", email="admin@example.com", password="testpass123", is_verified=True)
+        UserRole.objects.create(user=admin, role=Role.objects.get_or_create(name=Role.RoleName.ADMIN)[0])
+        self.store.delete()
+        self.client.force_authenticate(admin)
+        response = self.client.post(
+            "/api/catalog/stores/",
+            {"name": "Boutique gérée", "owner": str(self.owner.id)},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
     def test_owner_can_upload_image(self):
         self.client.force_authenticate(self.owner)

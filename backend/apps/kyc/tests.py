@@ -23,9 +23,10 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
-from apps.catalog.models import StoreCategory
-from apps.kyc.models import DriverKYC, KYCAuditLog, SellerKYC
+from apps.catalog.models import Product, Store, StoreCategory
+from apps.kyc.models import DriverKYC, KYCAuditLog, SellerKYC, VerificationHistory
 from apps.monetization.models import Notification
+from apps.security.models import SecurityLog
 from apps.users.models import Role, User
 
 KYC_FS = override_settings(KYC_STORAGE_BACKEND="fs")
@@ -81,11 +82,26 @@ class KYCSubmitTests(TestCase):
         self.assertEqual(response.status_code, 201, response.data)
 
         kyc = SellerKYC.objects.get(seller=self.merchant)
-        self.assertEqual(kyc.status, SellerKYC.Status.PENDING)
+        # Depuis la spec §8, le dépôt de dossier passe en SUBMITTED (prêt à
+        # être examiné) — PENDING ne désignant que le dossier créé à
+        # l'inscription, en attente de soumission.
+        self.assertEqual(kyc.status, SellerKYC.Status.SUBMITTED)
         self.assertIn(f"kyc/sellers/seller_{self.merchant.id}/{kyc.id}/", kyc.document_front)
         self.assertIn(f"kyc/sellers/seller_{self.merchant.id}/{kyc.id}/", kyc.document_back)
         self.assertTrue(kyc.document_front.endswith("front.jpg"))
         self.assertTrue(kyc.document_back.endswith("back.jpg"))
+
+    def test_seller_submit_records_verification_history_and_security_log(self):
+        self._submit("/api/kyc/seller-kyc/submit/", self.merchant)
+        kyc = SellerKYC.objects.get(seller=self.merchant)
+        history = kyc.history.first()
+        self.assertIsNotNone(history)
+        self.assertEqual(history.previous_status, SellerKYC.Status.PENDING)
+        self.assertEqual(history.new_status, SellerKYC.Status.SUBMITTED)
+        from apps.security.models import SecurityLog
+        self.assertTrue(
+            SecurityLog.objects.filter(user=self.merchant, action=SecurityLog.Action.KYC_DOCUMENT_UPLOAD).exists()
+        )
 
     def test_seller_resubmission_is_200(self):
         self._submit("/api/kyc/seller-kyc/submit/", self.merchant)
@@ -326,3 +342,251 @@ class KYCGatingTests(TestCase):
         response = self.client.patch("/api/orders/drivers/me/", {"availability_status": "available"}, format="json")
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["availability_status"], "available")
+
+
+@KYC_FS
+class KYCAdminWorkflowTests(TestCase):
+    """Nouveaux statuts et actions admin (spec §8, §11, §12) : start_review,
+    request_resubmission, suspend, block + filtre par statut."""
+
+    def setUp(self):
+        self.merchant = make_user("m2@sunu.test", Role.RoleName.MERCHANT)
+        self.admin = make_user("admin2@sunu.test", Role.RoleName.ADMIN)
+        self.client = APIClient()
+
+    def _kyc(self, status=None):
+        return SellerKYC.objects.create(
+            seller=self.merchant, document_type="cni",
+            document_front="kyc/sellers/1/f.jpg", document_back="kyc/sellers/1/b.jpg",
+            status=status or SellerKYC.Status.VERIFIED,
+        )
+
+    def _admin_post(self, kyc, action, data=None):
+        self.client.force_authenticate(self.admin)
+        return self.client.post(f"/api/kyc/seller-kyc/{kyc.id}/{action}/", data or {}, format="json")
+
+    def test_start_review_sets_under_review_and_history(self):
+        kyc = self._kyc(status=SellerKYC.Status.SUBMITTED)
+        response = self._admin_post(kyc, "start-review")
+        self.assertEqual(response.status_code, 200, response.data)
+        kyc.refresh_from_db()
+        self.assertEqual(kyc.status, SellerKYC.Status.UNDER_REVIEW)
+
+        history = VerificationHistory.objects.filter(kyc=kyc).latest("created_at")
+        self.assertEqual(history.previous_status, SellerKYC.Status.SUBMITTED)
+        self.assertEqual(history.new_status, SellerKYC.Status.UNDER_REVIEW)
+        self.assertEqual(history.reviewed_by, self.admin)
+
+    def test_request_resubmission_requires_reason(self):
+        kyc = self._kyc(status=SellerKYC.Status.REJECTED)
+        no_reason = self._admin_post(kyc, "request-resubmission")
+        self.assertEqual(no_reason.status_code, 400)
+        kyc.refresh_from_db()
+        self.assertEqual(kyc.status, SellerKYC.Status.REJECTED)
+
+        with_reason = self._admin_post(kyc, "request-resubmission", {"reason": "Photo illisible"})
+        self.assertEqual(with_reason.status_code, 200, with_reason.data)
+        kyc.refresh_from_db()
+        self.assertEqual(kyc.status, SellerKYC.Status.REJECTED)
+        self.assertTrue(
+            Notification.objects.filter(user=self.merchant, metadata__kind="kyc_resubmission").exists()
+        )
+        self.assertTrue(
+            KYCAuditLog.objects.filter(action=KYCAuditLog.Action.ADMIN_RESUBMIT_SELLER_KYC).exists()
+        )
+        self.assertTrue(
+            SecurityLog.objects.filter(user=self.merchant, action=SecurityLog.Action.KYC_REQUEST_RESUBMISSION).exists()
+        )
+
+    def test_suspend_cuts_selling_and_blocks_new_submission(self):
+        kyc = self._kyc()
+        response = self._admin_post(kyc, "suspend", {"reason": "Litige en cours"})
+        self.assertEqual(response.status_code, 200, response.data)
+        kyc.refresh_from_db()
+        self.assertEqual(kyc.status, SellerKYC.Status.SUSPENDED)
+        self.assertFalse(kyc.can_sell)
+        self.assertTrue(
+            SecurityLog.objects.filter(user=self.merchant, action=SecurityLog.Action.KYC_SUSPENDED).exists()
+        )
+
+        # Un compte suspendu ne peut plus soumettre de nouveau dossier.
+        self.client.force_authenticate(self.merchant)
+        blocked = self.client.post(
+            "/api/kyc/seller-kyc/submit/",
+            {
+                "document_type": "cni",
+                "document_front": cni_upload("front.jpg"),
+                "document_back": cni_upload("back.jpg"),
+            },
+            format="multipart",
+        )
+        self.assertEqual(blocked.status_code, 400)
+        kyc.refresh_from_db()
+        self.assertEqual(kyc.status, SellerKYC.Status.SUSPENDED)
+
+    def test_block_sets_blocked_with_logs(self):
+        kyc = self._kyc()
+        response = self._admin_post(kyc, "block", {"reason": "Fraude avérée"})
+        self.assertEqual(response.status_code, 200, response.data)
+        kyc.refresh_from_db()
+        self.assertEqual(kyc.status, SellerKYC.Status.BLOCKED)
+        self.assertTrue(
+            SecurityLog.objects.filter(user=self.merchant, action=SecurityLog.Action.KYC_BLOCKED).exists()
+        )
+        self.assertTrue(
+            KYCAuditLog.objects.filter(action=KYCAuditLog.Action.ADMIN_BLOCK_SELLER_KYC).exists()
+        )
+        self.assertTrue(Notification.objects.filter(user=self.merchant, metadata__kind="kyc_blocked").exists())
+
+    def test_status_filter_on_admin_list(self):
+        verified = self._kyc(status=SellerKYC.Status.VERIFIED)
+        SellerKYC.objects.create(
+            seller=make_user("pending@sunu.test", Role.RoleName.MERCHANT),
+            document_type="cni",
+            document_front="kyc/sellers/2/f.jpg", document_back="kyc/sellers/2/b.jpg",
+            status=SellerKYC.Status.PENDING,
+        )
+        self.client.force_authenticate(self.admin)
+        response = self.client.get("/api/kyc/seller-kyc/", {"status": "VERIFIED"}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], str(verified.id))
+
+    def test_admin_retrieve_exposes_history_and_fraud_flags(self):
+        kyc = self._kyc()
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(f"/api/kyc/seller-kyc/{kyc.id}/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("history", response.data)
+        self.assertIn("fraud_flags", response.data)
+        self.assertIsInstance(response.data["fraud_flags"], list)
+
+    def test_own_dossier_never_leaks_history_or_fraud_flags(self):
+        kyc = self._kyc()
+        self.client.force_authenticate(self.merchant)
+        response = self.client.get("/api/kyc/seller-kyc/me/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["history"], [])
+        self.assertEqual(response.data["fraud_flags"], [])
+
+
+@KYC_FS
+class KYCReusedDocumentTests(TestCase):
+    """Détection simple de fraude (spec §15) : un même document soumis à
+    plusieurs comptes, un téléphone partagé → alertes réservées à l'admin."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.override_storage = override_settings(KYC_STORAGE_LOCATION=self.tmp)
+        self.override_storage.enable()
+        self.addCleanup(self.override_storage.disable)
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+        self.merchant_a = make_user("fraud-a@sunu.test", Role.RoleName.MERCHANT)
+        self.merchant_b = make_user("fraud-b@sunu.test", Role.RoleName.MERCHANT)
+        self.admin = make_user("admin-fraud@sunu.test", Role.RoleName.ADMIN)
+        self.client = APIClient()
+
+    def _submit(self, user, doc_bytes, phone=None):
+        self.client.force_authenticate(user)
+        if phone:
+            user.phone = phone
+            user.save()
+        return self.client.post(
+            "/api/kyc/seller-kyc/submit/",
+            {
+                "document_type": "cni",
+                "document_front": SimpleUploadedFile("front.jpg", doc_bytes, content_type="image/jpeg"),
+                "document_back": SimpleUploadedFile("back.jpg", doc_bytes, content_type="image/jpeg"),
+            },
+            format="multipart",
+        )
+
+    def test_reused_document_is_flagged_for_admin(self):
+        same_doc = b"\xff\xd8\xff\xe0" + b"A" * 512
+        shared_phone = "+221771111111"
+        self._submit(self.merchant_a, same_doc, phone=shared_phone)
+        self._submit(self.merchant_b, same_doc, phone=shared_phone)
+
+        kyc_b = SellerKYC.objects.get(seller=self.merchant_b)
+        self.assertEqual(kyc_b.document_hash, SellerKYC.objects.get(seller=self.merchant_a).document_hash)
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(f"/api/kyc/seller-kyc/{kyc_b.id}/")
+        flags = {f["code"] for f in response.data["fraud_flags"]}
+        self.assertIn("document_reused", flags)
+        self.assertIn("phone_reused", flags)
+
+    def test_own_dossier_merchant_sees_no_flags(self):
+        kyc = SellerKYC.objects.create(
+            seller=self.merchant_a, document_type="cni",
+            document_front="kyc/sellers/1/f.jpg", document_back="kyc/sellers/1/b.jpg",
+            status=SellerKYC.Status.VERIFIED,
+        )
+        self.client.force_authenticate(self.merchant_a)
+        response = self.client.get("/api/kyc/seller-kyc/me/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["fraud_flags"], [])
+
+
+@KYC_FS
+class KYCPublishGatingTests(TestCase):
+    """Publication de produit et badge « vendeur vérifié » (spec §8, §9, §21) :
+    un vendeur suspendu/bloqué ne peut plus publier, et la marketplace affiche
+    le badge généré backend."""
+
+    def setUp(self):
+        self.merchant = make_user("pub@sunu.test", Role.RoleName.MERCHANT)
+        self.client = APIClient()
+        self.store = Store.objects.create(
+            owner=self.merchant, name="Boutique de test", status=Store.Status.ACTIVE,
+        )
+        self.product = Product.objects.create(
+            store=self.store, name="Produit de test", base_price=1500, status=Product.Status.DRAFT,
+        )
+
+    def _kyc(self, status):
+        return SellerKYC.objects.create(
+            seller=self.merchant, document_type="cni",
+            document_front="kyc/sellers/1/f.jpg", document_back="kyc/sellers/1/b.jpg",
+            status=status,
+        )
+
+    def _publish(self):
+        self.client.force_authenticate(self.merchant)
+        return self.client.patch(
+            f"/api/catalog/products/{self.product.id}/", {"status": "active"}, format="json"
+        )
+
+    def test_verified_seller_can_publish_product(self):
+        self._kyc(SellerKYC.Status.VERIFIED)
+        response = self._publish()
+        self.assertEqual(response.status_code, 200, response.data)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.status, Product.Status.ACTIVE)
+
+    def test_suspended_seller_cannot_publish_product(self):
+        self._kyc(SellerKYC.Status.SUSPENDED)
+        response = self._publish()
+        self.assertEqual(response.status_code, 403)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.status, Product.Status.DRAFT)
+
+    def test_blocked_seller_cannot_publish_product(self):
+        self._kyc(SellerKYC.Status.BLOCKED)
+        response = self._publish()
+        self.assertEqual(response.status_code, 403)
+
+    def test_verified_badge_on_store_and_product(self):
+        self._kyc(SellerKYC.Status.VERIFIED)
+        store_response = self.client.get(f"/api/catalog/stores/{self.store.id}/")
+        self.assertEqual(store_response.data["is_verified_seller"], True)
+
+        self.product.status = Product.Status.ACTIVE
+        self.product.save()
+        product_response = self.client.get(f"/api/catalog/products/{self.product.id}/")
+        self.assertEqual(product_response.data["store_is_verified"], True)
+
+    def test_no_badge_when_not_verified(self):
+        store_response = self.client.get(f"/api/catalog/stores/{self.store.id}/")
+        self.assertEqual(store_response.data["is_verified_seller"], False)

@@ -12,6 +12,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { SponsorProductModal } from "@/components/merchant/SponsorProductModal";
 import { ApiError } from "@/lib/api";
 import { formatPrice } from "@/lib/utils";
+import { ProductLimitBanner } from "@/components/merchant/ProductLimitBanner";
 import type { Product } from "@/types";
 
 const STATUS_VARIANT: Record<Product["status"], "default" | "success" | "warning"> = {
@@ -35,6 +36,8 @@ export default function CatalogPage() {
     return results.flat();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeIds.join(",")]);
+
+  const { data: account } = useAsync(() => monetizationApi.getMySubscriptionState(), []);
 
   const { data: sponsorships, refetch: refetchSponsorships } = useAsync(
     () => monetizationApi.listMySponsoredProducts(),
@@ -108,6 +111,8 @@ export default function CatalogPage() {
       </div>
 
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageSelected} />
+
+      <ProductLimitBanner account={account} />
 
       {publishError && (
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-danger/30 bg-red-50 px-3.5 py-2.5 text-sm text-danger">

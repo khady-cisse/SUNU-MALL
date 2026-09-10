@@ -92,6 +92,41 @@ export function assignDriver(deliveryId: string, driverId: string) {
   return apiPost<Delivery>(`/orders/deliveries/${deliveryId}/assign/`, { driver: driverId });
 }
 
+/** Meilleurs livreurs candidats pour une livraison donnée (Espace Partenaire). */
+export async function suggestDrivers(deliveryId: string, limit = 5) {
+  return apiGet<{ drivers: Driver[]; message?: string }>(`/orders/deliveries/${deliveryId}/suggest/?limit=${limit}`);
+}
+
+/** Le livreur accepte la mission qui lui est affectée. */
+export function acceptDelivery(deliveryId: string) {
+  return apiPost<Delivery>(`/orders/deliveries/${deliveryId}/accept/`);
+}
+
+/** Le livreur refuse la mission (motif obligatoire) — redevient affectable. */
+export function refuseDelivery(deliveryId: string, reason: string, comment = "") {
+  return apiPost<Delivery>(`/orders/deliveries/${deliveryId}/refuse/`, { reason, comment });
+}
+
+/** Le livreur signale un échec de livraison (motif + commentaire obligatoires). */
+export function failDelivery(deliveryId: string, reason: string, comment = "") {
+  return apiPost<Delivery>(`/orders/deliveries/${deliveryId}/fail/`, { reason, comment });
+}
+
+/** Demande de retour du colis au vendeur. */
+export function requestDeliveryReturn(deliveryId: string, reason: string, comment = "") {
+  return apiPost<Delivery>(`/orders/deliveries/${deliveryId}/return/`, { reason, comment });
+}
+
+/** Le retour est terminé : colis rendu au vendeur. */
+export function completeDeliveryReturn(deliveryId: string, comment = "") {
+  return apiPost<Delivery>(`/orders/deliveries/${deliveryId}/return/complete/`, { comment });
+}
+
+/** Timeline complète (spec §28) — pour l'Espace Partenaire / livreur. */
+export function deliveryEventsHistory(deliveryId: string) {
+  return apiGet<DeliveryEvent[]>(`/orders/deliveries/${deliveryId}/events-history/`);
+}
+
 export function updateDeliveryStatus(deliveryId: string, status: DeliveryStatus) {
   return apiPost<Delivery & { confirmation_code?: string }>(`/orders/deliveries/${deliveryId}/status/`, { status });
 }

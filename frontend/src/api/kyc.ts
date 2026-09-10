@@ -56,6 +56,42 @@ export function rejectDriverKyc(id: string, reason: string) {
   return apiPost<DriverKyc>(`/kyc/driver-kyc/${id}/reject/`, { reason });
 }
 
+/** Passe le dossier en "examen en cours" (réservé admin). */
+export function startReviewSellerKyc(id: string) {
+  return apiPost<SellerKyc>(`/kyc/seller-kyc/${id}/start-review/`);
+}
+
+export function startReviewDriverKyc(id: string) {
+  return apiPost<DriverKyc>(`/kyc/driver-kyc/${id}/start-review/`);
+}
+
+/** Demande une nouvelle soumission : le dossier repasse en REJECTED. */
+export function requestResubmissionSellerKyc(id: string, reason: string) {
+  return apiPost<SellerKyc>(`/kyc/seller-kyc/${id}/request-resubmission/`, { reason });
+}
+
+export function requestResubmissionDriverKyc(id: string, reason: string) {
+  return apiPost<DriverKyc>(`/kyc/driver-kyc/${id}/request-resubmission/`, { reason });
+}
+
+/** Suspend le compte vendeur/livreur (ventes coupées, re-soumission possible). */
+export function suspendSellerKyc(id: string, reason?: string) {
+  return apiPost<SellerKyc>(`/kyc/seller-kyc/${id}/suspend/`, { reason: reason ?? "" });
+}
+
+export function suspendDriverKyc(id: string, reason?: string) {
+  return apiPost<DriverKyc>(`/kyc/driver-kyc/${id}/suspend/`, { reason: reason ?? "" });
+}
+
+/** Bloque définitivement le compte (ventes coupées, aucun retrait possible). */
+export function blockSellerKyc(id: string, reason?: string) {
+  return apiPost<SellerKyc>(`/kyc/seller-kyc/${id}/block/`, { reason: reason ?? "" });
+}
+
+export function blockDriverKyc(id: string, reason?: string) {
+  return apiPost<DriverKyc>(`/kyc/driver-kyc/${id}/block/`, { reason: reason ?? "" });
+}
+
 /** Récupère son propre dossier vendeur (404 si jamais soumis). */
 export function getMySellerKyc() {
   return apiGet<SellerKyc>("/kyc/seller-kyc/me/");

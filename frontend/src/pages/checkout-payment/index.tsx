@@ -7,7 +7,7 @@ import * as ordersApi from "@/api/orders";
 import * as paymentsApi from "@/api/payments";
 import { useCheckoutStore } from "@/store/checkoutStore";
 import { formatPrice } from "@/lib/utils";
-import { ApiError } from "@/lib/api";
+import { apiErrorMessage, ApiError } from "@/lib/api";
 import type { Order } from "@/types";
 import { PAYMENT_METHODS } from "@/lib/paymentMethods";
 import { CardPaymentForm } from "@/components/checkout/CardPaymentForm";
@@ -58,7 +58,9 @@ export default function CheckoutPaymentPage() {
       });
       setCreatedOrder(order);
     } catch (err) {
-      setError(err instanceof ApiError ? "Impossible de finaliser la commande." : "Erreur réseau.");
+      setError(
+        apiErrorMessage(err, err instanceof ApiError ? "Impossible de finaliser la commande." : "Erreur réseau."),
+      );
     } finally {
       setSubmitting(false);
     }

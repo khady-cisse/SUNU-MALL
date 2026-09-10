@@ -8,23 +8,10 @@ import { Spinner } from "@/components/ui/Spinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { KycStatusCard } from "@/components/kyc/KycStatusCard";
 import { formatDate } from "@/lib/utils";
-import type { DeliveryStatus, DriverAvailability } from "@/types";
+import { DELIVERY_STATUS_LABEL, DELIVERY_STATUS_VARIANT } from "@/lib/delivery";
+import type { DriverAvailability } from "@/types";
 
-const STATUS_LABEL: Record<DeliveryStatus, string> = {
-  pending: "En attente d'affectation",
-  assigned: "Affectée",
-  picked_up: "Colis récupéré",
-  delivered: "Livrée",
-  cancelled: "Annulée",
-};
-
-const STATUS_VARIANT: Record<DeliveryStatus, "default" | "success" | "warning" | "danger"> = {
-  pending: "default",
-  assigned: "warning",
-  picked_up: "warning",
-  delivered: "success",
-  cancelled: "danger",
-};
+const TERMINAL_STATUSES = new Set(["delivered", "delivery_failed", "customer_unavailable", "returned", "cancelled"]);
 
 const AVAILABILITY_LABEL: Record<DriverAvailability, string> = {
   available: "Disponible",
@@ -43,8 +30,8 @@ export default function DriverDashboardPage() {
     refetchDriver();
   }
 
-  const active = deliveries?.filter((d) => d.status !== "delivered" && d.status !== "cancelled") ?? [];
-  const history = deliveries?.filter((d) => d.status === "delivered" || d.status === "cancelled") ?? [];
+  const active = deliveries?.filter((d) => !TERMINAL_STATUSES.has(d.status)) ?? [];
+  const history = deliveries?.filter((d) => TERMINAL_STATUSES.has(d.status)) ?? [];
 
   return (
     <div className="flex flex-col gap-6">
@@ -85,7 +72,7 @@ export default function DriverDashboardPage() {
                         <p className="font-semibold text-ink">Commande n°{delivery.order.slice(0, 8)}</p>
                       </div>
                       <div className="flex items-center gap-3">
-                        <Badge variant={STATUS_VARIANT[delivery.status]}>{STATUS_LABEL[delivery.status]}</Badge>
+                        <Badge variant={DELIVERY_STATUS_VARIANT[delivery.status]}>{DELIVERY_STATUS_LABEL[delivery.status]}</Badge>
                         <ChevronRight className="h-4 w-4 text-muted-foreground" />
                       </div>
                     </Card>
@@ -107,7 +94,7 @@ export default function DriverDashboardPage() {
                         <p className="font-medium text-ink">Commande n°{delivery.order.slice(0, 8)}</p>
                       </div>
                       <div className="flex items-center gap-3">
-                        <Badge variant={STATUS_VARIANT[delivery.status]}>{STATUS_LABEL[delivery.status]}</Badge>
+                        <Badge variant={DELIVERY_STATUS_VARIANT[delivery.status]}>{DELIVERY_STATUS_LABEL[delivery.status]}</Badge>
                         <ChevronRight className="h-4 w-4 text-muted-foreground" />
                       </div>
                     </Card>

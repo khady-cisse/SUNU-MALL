@@ -20,10 +20,16 @@ const DOC_TYPES = [
 
 const STATUS_META: Record<KycStatus, { label: string; variant: "default" | "success" | "warning" | "danger" }> = {
   PENDING: { label: "Vérification en cours", variant: "warning" },
+  SUBMITTED: { label: "Documents reçus", variant: "warning" },
   UNDER_REVIEW: { label: "Examen en cours", variant: "warning" },
   VERIFIED: { label: "Identité vérifiée", variant: "success" },
   REJECTED: { label: "Vérification à refaire", variant: "danger" },
+  SUSPENDED: { label: "Compte suspendu", variant: "danger" },
+  BLOCKED: { label: "Compte bloqué", variant: "danger" },
 };
+
+/** Statuts pour lesquels l'administration refuse toute nouvelle soumission. */
+const NO_RESUBMIT: ReadonlySet<KycStatus> = new Set(["SUSPENDED", "BLOCKED"]);
 
 const KINDS = {
   seller: {
@@ -169,6 +175,13 @@ export function KycStatusCard({ kind }: Props) {
       </div>
       {data.status === "VERIFIED" ? (
         <p className="text-sm text-success">Votre identité a été vérifiée. Toutes les fonctionnalités sont débloquées.</p>
+      ) : data.status === "SUSPENDED" || data.status === "BLOCKED" ? (
+        <p className="text-sm text-danger">
+          {data.status === "BLOCKED"
+            ? "Votre compte a été bloqué suite à une décision de Sunu Mall. La vente est définitivement coupée."
+            : "Votre compte a été suspendu : la vente est momentanément coupée."}
+          {data.rejection_reason ? ` Motif : ${data.rejection_reason}.` : ""}
+        </p>
       ) : (
         <p className="text-sm text-muted-foreground">
           {data.status === "REJECTED"
@@ -176,7 +189,7 @@ export function KycStatusCard({ kind }: Props) {
             : "Notre équipe vérifie vos documents. Vous recevrez une notification dès la fin de l'examen (≤ 24 h)."}
         </p>
       )}
-      {data.status !== "VERIFIED" && (
+      {data.status !== "VERIFIED" && !NO_RESUBMIT.has(data.status) && (
         <>
           {submitSuccess && <p className="text-sm text-success">{submitSuccess}</p>}
           {!showForm ? (

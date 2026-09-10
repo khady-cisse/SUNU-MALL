@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { CheckCircle2, Heart, ImageOff, MessageSquare, PackageX, ShoppingCart, TriangleAlert } from "lucide-react";
+import { BadgeCheck, CheckCircle2, Heart, ImageOff, MessageSquare, PackageX, ShoppingCart, TriangleAlert } from "lucide-react";
 import { useAsync } from "@/hooks/useAsync";
 import * as catalogApi from "@/api/catalog";
 import { Button } from "@/components/ui/Button";
@@ -178,7 +178,10 @@ export default function ProductDetailPage() {
         </div>
 
         <div className="flex flex-col gap-4">
-          <p className="text-sm font-semibold text-muted-foreground">{product.store_name}</p>
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground">
+            {product.store_name}
+            {product.store_is_verified && <BadgeCheck className="h-4 w-4 text-green-600" aria-label="Vendeur vérifié" />}
+          </p>
           <h1 className="font-display text-2xl font-extrabold leading-tight text-gray-900 md:text-3xl">{product.name}</h1>
           {reviews && reviews.length > 0 && (
             <div className="flex items-center gap-2">

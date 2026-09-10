@@ -1,15 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronRight, Clock, Package, ShoppingBag, Store as StoreIcon, TriangleAlert, Wallet } from "lucide-react";
+import {
+  ChevronRight,
+  Clock,
+  Headset,
+  Megaphone,
+  Package,
+  PlusCircle,
+  ShoppingBag,
+  Store as StoreIcon,
+  TriangleAlert,
+  Wallet,
+} from "lucide-react";
 import { useAsync } from "@/hooks/useAsync";
 import * as catalogApi from "@/api/catalog";
 import * as ordersApi from "@/api/orders";
+import * as monetizationApi from "@/api/monetization";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { KycStatusCard } from "@/components/kyc/KycStatusCard";
+import { SubscriptionStatusCard } from "@/components/merchant/SubscriptionStatusCard";
+import { ProductLimitBanner } from "@/components/merchant/ProductLimitBanner";
 import { formatDate, formatPrice } from "@/lib/utils";
 import type { Driver } from "@/types";
 
@@ -25,9 +39,9 @@ const STATUS_VARIANT: Record<string, "default" | "success" | "warning" | "danger
 export default function MerchantDashboardPage() {
   const { data: own, loading: loadingStores } = useAsync(() => catalogApi.listMyStores(), []);
   const { data: orders, loading: loadingOrders, refetch: refetchOrders } = useAsync(() => ordersApi.listOrders(), []);
+  const { data: account } = useAsync(() => monetizationApi.getMySubscriptionState(), []);
   const [assigningDeliveryId, setAssigningDeliveryId] = useState<string | null>(null);
 
-  // Livreurs proposés par boutique (affectation = proximité de la boutique).
   const orderList = useMemo(() => orders ?? [], [orders]);
   const pendingStoreIds = useMemo(
     () => [...new Set(orderList.filter((o) => o.delivery?.status === "pending").map((o) => o.store))],
@@ -48,7 +62,7 @@ export default function MerchantDashboardPage() {
       }
       if (!cancelled) setDriversByStore(entries);
     };
-    load();
+    void load();
     return () => {
       cancelled = true;
     };
@@ -56,7 +70,10 @@ export default function MerchantDashboardPage() {
 
   if (loadingStores || loadingOrders) return <Spinner label="Chargement du tableau de bord…" />;
   if (!own) return null;
-  const revenue = orders?.reduce((sum, o) => sum + parseFloat(o.total_amount), 0) ?? 0;
+
+  const revenue = orderList.reduce((sum, o) => sum + parseFloat(o.total_amount), 0);
+  const paidOrders = orderList.filter((o) => o.status === "paid" || o.status === "delivered");
+  const activeStore = own[0];
 
   async function assign(deliveryId: string, driverId: string) {
     if (!driverId) return;
@@ -89,18 +106,31 @@ export default function MerchantDashboardPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-2xl text-ink">Tableau de bord</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl text-ink">Tableau de bord</h1>
+        <Link to="/add-product">
+          <Button size="sm">
+            <PlusCircle className="h-4 w-4" /> Ajouter un produit
+          </Button>
+        </Link>
+      </div>
 
       <KycStatusCard kind="seller" />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <SubscriptionStatusCard account={account} />
+
+      {account && !account.has_active_subscription && (
+        <ProductLimitBanner account={account} />
+      )}
+
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Card className="flex items-center gap-3">
           <span className="grid h-10 w-10 place-items-center rounded-xl bg-accent text-orange">
             <Wallet className="h-5 w-5" />
           </span>
-          <div>
+          <div className="min-w-0">
             <p className="text-xs text-muted-foreground">Chiffre d'affaires</p>
-            <p className="text-lg font-semibold text-ink">{formatPrice(revenue)}</p>
+            <p className="truncate text-lg font-semibold text-ink">{formatPrice(revenue)}</p>
           </div>
         </Card>
         <Card className="flex items-center gap-3">
@@ -109,7 +139,12 @@ export default function MerchantDashboardPage() {
           </span>
           <div>
             <p className="text-xs text-muted-foreground">Commandes</p>
-            <p className="text-lg font-semibold text-ink">{orders?.length ?? 0}</p>
+            <p className="text-lg font-semibold text-ink">
+              {orderList.length}
+              {paidOrders.length > 0 && (
+                <span className="ml-1 text-xs font-normal text-success">({paidOrders.length} payées)</span>
+              )}
+            </p>
           </div>
         </Card>
         <Card className="flex items-center gap-3">
@@ -117,10 +152,52 @@ export default function MerchantDashboardPage() {
             <Package className="h-5 w-5" />
           </span>
           <div>
-            <p className="text-xs text-muted-foreground">Boutiques</p>
-            <p className="text-lg font-semibold text-ink">{own.length}</p>
+            <p className="text-xs text-muted-foreground">Produits</p>
+            <p className="text-lg font-semibold text-ink">
+              {account?.product_count ?? 0}
+              {account && !account.is_unlimited && account.product_limit != null && (
+                <span className="ml-1 text-xs font-normal text-muted-foreground">/ {account.product_limit}</span>
+              )}
+            </p>
           </div>
         </Card>
+        <Card className="flex items-center gap-3">
+          <span className="grid h-10 w-10 place-items-center rounded-xl bg-accent text-orange">
+            <StoreIcon className="h-5 w-5" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-xs text-muted-foreground">Boutique</p>
+            <p className="truncate text-sm font-semibold text-ink">{activeStore?.name}</p>
+            <Badge variant={activeStore?.status === "active" ? "success" : activeStore?.status === "suspended" ? "danger" : "warning"}>
+              {activeStore?.status === "active" ? "Active" : activeStore?.status === "suspended" ? "Suspendue" : "En attente"}
+            </Badge>
+          </div>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Link to="/offers" className="focus-ring rounded-xl">
+          <Card variant="interactive" className="flex items-center gap-3">
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-accent text-orange">
+              <Megaphone className="h-5 w-5" />
+            </span>
+            <div>
+              <p className="text-sm font-semibold text-ink">Nos offres d'abonnement</p>
+              <p className="text-xs text-muted-foreground">Comparez et changez de formule en un clic.</p>
+            </div>
+          </Card>
+        </Link>
+        <Link to="/support" className="focus-ring rounded-xl">
+          <Card variant="interactive" className="flex items-center gap-3">
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-accent text-orange">
+              <Headset className="h-5 w-5" />
+            </span>
+            <div>
+              <p className="text-sm font-semibold text-ink">Support & assistance</p>
+              <p className="text-xs text-muted-foreground">Ouvrez un ticket, suivez vos demandes.</p>
+            </div>
+          </Card>
+        </Link>
       </div>
 
       {own.map((store) => (
@@ -147,14 +224,17 @@ export default function MerchantDashboardPage() {
       ))}
 
       <Card>
-        <CardTitle>Dernières commandes</CardTitle>
-        {orders?.length === 0 ? (
+        <div className="flex items-center justify-between">
+          <CardTitle>Dernières commandes</CardTitle>
+          <span className="text-xs text-muted-foreground">Suivi des livraisons accessible ici</span>
+        </div>
+        {orderList.length === 0 ? (
           <div className="mt-3">
             <EmptyState icon={ShoppingBag} title="Aucune commande reçue" />
           </div>
         ) : (
           <div className="mt-3 flex flex-col gap-3">
-            {orders?.slice(0, 5).map((order) => (
+            {orderList.slice(0, 5).map((order) => (
               <div key={order.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3 text-sm">
                 <span className="text-muted-foreground">{formatDate(order.created_at)}</span>
                 <Badge variant={STATUS_VARIANT[order.status] ?? "default"}>{order.status}</Badge>

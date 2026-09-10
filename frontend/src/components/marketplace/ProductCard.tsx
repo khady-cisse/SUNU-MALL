@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Heart, ImageOff, Loader2, Plus } from "lucide-react";
+import { BadgeCheck, Heart, ImageOff, Loader2, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { useAuthStore } from "@/store/authStore";
 import { useGuestCheckoutStore } from "@/store/guestCheckoutStore";
@@ -99,7 +99,12 @@ export function ProductCard({ product, sponsored }: { product: Product; sponsore
       </div>
 
       <div className="flex flex-1 flex-col gap-1 p-3">
-        <p className="truncate text-[11px] text-gray-400">{product.store_name}</p>
+        <p className="flex items-center gap-1 truncate text-[11px] text-gray-400">
+          <span className="truncate">{product.store_name}</span>
+          {product.store_is_verified && (
+            <BadgeCheck className="h-3 w-3 shrink-0 text-green-600" aria-label="Vendeur vérifié" />
+          )}
+        </p>
         <p className="line-clamp-2 min-h-[2.5em] text-sm font-semibold leading-snug text-gray-800">{product.name}</p>
 
         <div className="mt-auto flex items-center justify-between pt-1">

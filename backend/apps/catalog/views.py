@@ -14,45 +14,37 @@ from .serializers import (
     ReviewSerializer, StoreCategorySerializer, StoreSerializer, StoreSettingsSerializer,
 )
 from apps.users.permissions import IsAdmin, IsStoreOwnerOrAdmin
-from apps.users.models import Role
 from apps.monetization.models import Notification, Subscription, SubscriptionPlan, SponsoredProduct
-from apps.kyc.utils import seller_kyc_verified
+from apps.kyc.models import SellerKYC
+from apps.kyc.utils import seller_account_active, seller_kyc_verified
+from apps.monetization import services as monetization_services
+from apps.monetization.services import PRODUCT_LIMIT_EXCEEDED_MESSAGE
 
 
 def _active_product_limit(store):
     """
-    Nombre max de produits ACTIFS (publiés) autorisés pour la boutique,
-    selon l'abonnement en cours de son propriétaire — None = illimité.
-    Sans abonnement actif, la boutique reste sur l'offre la moins chère
-    (gratuite par construction : c'est l'offre d'entrée du produit).
+    Nombre max de produits autorisés pour la boutique, selon l'abonnement en
+    cours de son propriétaire — None = illimité, 0 = pas d'abonnement actif.
+    Calcul côté backend uniquement (source de vérité, spec monétisation §10).
     """
-    today = timezone.now().date()
-    subscription = (
-        Subscription.objects.filter(
-            subscriber_type="merchant", subscriber_id=store.owner_id,
-            status=Subscription.Status.ACTIVE, starts_at__lte=today, ends_at__gte=today,
-        )
-        .select_related("plan")
-        .first()
-    )
-    if subscription:
-        return subscription.plan.max_products
-    default_plan = SubscriptionPlan.objects.order_by("price").first()
-    return default_plan.max_products if default_plan else None
+    return monetization_services.product_limit_for(store.owner)
 
 
 def _check_product_limit(store, exclude_product_id=None):
+    from rest_framework.exceptions import ValidationError
+
     limit = _active_product_limit(store)
     if limit is None:
         return
-    active_count = Product.objects.filter(store=store, status=Product.Status.ACTIVE)
-    if exclude_product_id:
-        active_count = active_count.exclude(id=exclude_product_id)
-    if active_count.count() >= limit:
+    if limit == 0:
         raise ValidationError(
-            f"Limite de {limit} produits actifs atteinte pour votre offre. "
-            "Passez à une offre supérieure pour en publier davantage."
+            "Vous n'avez pas d'abonnement actif. Souscrivez à une formule pour publier des produits."
         )
+    count = Product.objects.filter(store=store)
+    if exclude_product_id:
+        count = count.exclude(id=exclude_product_id)
+    if count.count() >= limit:
+        raise ValidationError(PRODUCT_LIMIT_EXCEEDED_MESSAGE)
 
 
 class CategoryViewSet(viewsets.ModelViewSet):
@@ -137,7 +129,7 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_authenticated and user.has_role(Role.RoleName.ADMIN):
+        if user.is_authenticated and user.is_admin():
             queryset = Product.objects.all()
         elif user.is_authenticated:
             queryset = Product.objects.filter(models.Q(status=Product.Status.ACTIVE) | models.Q(store__owner=user))
@@ -156,7 +148,15 @@ class ProductViewSet(viewsets.ModelViewSet):
         # Éviter les N+1 : ProductSerializer sérialise images + variants, et
         # ProductVariantSerializer lit inventory (get_quantity / is_available).
         # Prefetch les trois en 2 requêtes au lieu d'1 par produit/variante.
-        return queryset.prefetch_related(
+        # Badge boutique vérifiée : une seule sous-requête Exists agrégée.
+        return queryset.annotate(
+            store_is_verified=models.Exists(
+                SellerKYC.objects.filter(
+                    seller_id=models.OuterRef("store__owner_id"),
+                    status=SellerKYC.Status.VERIFIED,
+                )
+            )
+        ).prefetch_related(
             "images",
             models.Prefetch(
                 "variants",
@@ -167,10 +167,20 @@ class ProductViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         store = serializer.validated_data.get("store")
         user = self.request.user
-        if not user.has_role(Role.RoleName.ADMIN) and store.owner_id != user.id:
+        if not user.is_admin() and store.owner_id != user.id:
             raise PermissionDenied("Vous ne pouvez ajouter des produits que dans votre propre boutique.")
-        if serializer.validated_data.get("status") == Product.Status.ACTIVE:
+        # Limite de produits appliquée à la CRÉATION (spec monétisation §10) :
+        # comptage backend de tous les produits de la boutique, pas seulement
+        # les actifs — le client n'est jamais autorisé à décider de la limite.
+        if not user.is_admin():
             _check_product_limit(store)
+        if serializer.validated_data.get("status") == Product.Status.ACTIVE:
+            # Gating KYC (spec §8, §21) : publier un produit exige une identité
+            # vérifiée — et non suspendue/bloquée.
+            if not user.is_admin() and not seller_account_active(user):
+                raise PermissionDenied(
+                    "Votre identité (KYC) doit être vérifiée pour publier un produit."
+                )
         serializer.save()
 
     def perform_update(self, serializer):
@@ -181,6 +191,11 @@ class ProductViewSet(viewsets.ModelViewSet):
         # bloqué par la limite de son offre.
         if new_status == Product.Status.ACTIVE and product.status != Product.Status.ACTIVE:
             _check_product_limit(product.store, exclude_product_id=product.id)
+            user = self.request.user
+            if not user.is_admin() and not seller_account_active(user):
+                raise PermissionDenied(
+                    "Votre identité (KYC) doit être vérifiée pour publier un produit."
+                )
         serializer.save()
 
     @action(
@@ -325,7 +340,7 @@ class ProductVariantViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         product = serializer.validated_data.get("product")
         user = self.request.user
-        if not user.has_role(Role.RoleName.ADMIN) and product.store.owner_id != user.id:
+        if not user.is_admin() and product.store.owner_id != user.id:
             raise PermissionDenied("Vous ne pouvez ajouter des variantes qu'à vos propres produits.")
         serializer.save()
 
@@ -352,7 +367,7 @@ class StoreViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_authenticated and user.has_role(Role.RoleName.ADMIN):
+        if user.is_authenticated and user.is_admin():
             qs = Store.objects.all()
         elif user.is_authenticated:
             qs = Store.objects.filter(models.Q(status=Store.Status.ACTIVE) | models.Q(owner=user))
@@ -371,6 +386,12 @@ class StoreViewSet(viewsets.ModelViewSet):
             review_count=Coalesce(
                 models.Subquery(count_subquery[:1], output_field=models.IntegerField()), 0
             ),
+            # Badge "Vendeur vérifié" : une sous-requête Exists, zéro coût par
+            # page (une seule jointure agrégée, pas de boucle par boutique).
+            is_verified_seller=models.Exists(
+                SellerKYC.objects.filter(seller_id=models.OuterRef("owner_id"),
+                                         status=SellerKYC.Status.VERIFIED)
+            ),
         )
 
         category_id = self.request.query_params.get("product_category")
@@ -387,18 +408,30 @@ class StoreViewSet(viewsets.ModelViewSet):
                 "Votre identité (KYC) doit être vérifiée par un administrateur "
                 "avant de pouvoir créer une boutique."
             )
+        # Règle « 1 vendeur = 1 boutique » (spec §1) : appliquée côté backend,
+        # jamais dans le frontend. Un commerçant ne peut posséder qu'une seule
+        # boutique, quel que soit son statut (active, en attente, suspendue) —
+        # il la supprime d'abord s'il veut repartir de zéro. L'admin reste libre
+        # (un admin peut créer une boutique pour un vendeur via l'administration).
+        if not self.request.user.is_admin() and Store.objects.filter(
+            owner=self.request.user
+        ).exists():
+            raise PermissionDenied(
+                "Vous avez déjà une boutique sur Sunu Mall : 1 vendeur = 1 boutique. "
+                "Modifiez votre boutique existante ou supprimez-la pour en créer une nouvelle."
+            )
         serializer.save(owner=self.request.user)
 
     def perform_update(self, serializer):
         store = self.get_object()
         user = self.request.user
-        if not user.has_role(Role.RoleName.ADMIN) and store.owner_id != user.id:
+        if not user.is_admin() and store.owner_id != user.id:
             raise PermissionDenied("Vous ne pouvez modifier que votre propre boutique.")
         serializer.save()
 
     def perform_destroy(self, instance):
         user = self.request.user
-        if not user.has_role(Role.RoleName.ADMIN) and instance.owner_id != user.id:
+        if not user.is_admin() and instance.owner_id != user.id:
             raise PermissionDenied("Vous ne pouvez supprimer que votre propre boutique.")
         instance.delete()
 
@@ -412,7 +445,7 @@ class StoreViewSet(viewsets.ModelViewSet):
         """Photo de profil de la boutique — réservée au propriétaire (ou à l'admin)."""
         store = self.get_object()
         user = request.user
-        if not user.has_role(Role.RoleName.ADMIN) and store.owner_id != user.id:
+        if not user.is_admin() and store.owner_id != user.id:
             raise PermissionDenied("Vous ne pouvez modifier que votre propre boutique.")
         image_file = request.FILES.get("logo")
         if not image_file:
@@ -431,7 +464,7 @@ class StoreViewSet(viewsets.ModelViewSet):
         """Photo de couverture de la boutique — réservée au propriétaire (ou à l'admin)."""
         store = self.get_object()
         user = request.user
-        if not user.has_role(Role.RoleName.ADMIN) and store.owner_id != user.id:
+        if not user.is_admin() and store.owner_id != user.id:
             raise PermissionDenied("Vous ne pouvez modifier que votre propre boutique.")
         image_file = request.FILES.get("banner")
         if not image_file:
@@ -494,7 +527,7 @@ class StoreViewSet(viewsets.ModelViewSet):
         paramètres ne doivent être modifiables que par son propriétaire.
         """
         store = self.get_object()
-        if not request.user.has_role(Role.RoleName.ADMIN) and store.owner_id != request.user.id:
+        if not request.user.is_admin() and store.owner_id != request.user.id:
             raise PermissionDenied("Vous ne pouvez consulter/modifier que les paramètres de votre propre boutique.")
         settings_obj, _ = StoreSettings.objects.get_or_create(store=store)
         if request.method == "PATCH":
@@ -520,7 +553,7 @@ class ReviewViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         if self.action in ["update", "partial_update", "destroy"]:
             user = self.request.user
-            if user.is_authenticated and user.has_role(Role.RoleName.ADMIN):
+            if user.is_authenticated and user.is_admin():
                 return Review.objects.all()
             return Review.objects.filter(user=user)
         return Review.objects.all()

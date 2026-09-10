@@ -1,5 +1,8 @@
 from rest_framework import serializers
-from .models import Address, DeliveryZone, Driver, Delivery, DeliveryTracking, Order, OrderItem
+from .models import (
+    Address, Delivery, DeliveryEvent, DeliveryPartner, DeliveryTracking,
+    DeliveryZone, Driver, Order, OrderItem, PartnerInvoice, PartnerZonePricing,
+)
 
 
 class AddressSerializer(serializers.ModelSerializer):
@@ -29,9 +32,16 @@ class DriverSerializer(serializers.ModelSerializer):
         fields = [
             "id", "user", "full_name", "phone", "email", "zone", "vehicle_type",
             "availability_status", "last_position", "position_updated_at",
-            "distance_km", "created_at", "updated_at",
+            "distance_km", "partner", "is_suspended", "max_active_deliveries",
+            "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
+        extra_kwargs = {
+            "user": {"read_only": True},
+            "partner": {"required": False, "allow_null": True},
+            "is_suspended": {"required": False},
+            "max_active_deliveries": {"required": False},
+        }
 
     def get_last_position(self, obj):
         if obj.last_latitude is None or obj.last_longitude is None:
@@ -53,19 +63,45 @@ class DeliveryTrackingSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "recorded_at"]
 
 
+class DeliveryEventSerializer(serializers.ModelSerializer):
+    actor_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DeliveryEvent
+        fields = [
+            "id", "action", "actor", "actor_name", "actor_role",
+            "previous_status", "new_status", "comment", "metadata", "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_actor_name(self, obj):
+        if not obj.actor:
+            return ""
+        return obj.actor.get_full_name() or obj.actor.email
+
+
 class DeliverySerializer(serializers.ModelSerializer):
     driver_detail = DriverSerializer(source="driver", read_only=True)
+    partner_detail = serializers.SerializerMethodField()
     last_position = serializers.SerializerMethodField()
     eta_seconds = serializers.SerializerMethodField()
+    timeline = serializers.SerializerMethodField()
 
     class Meta:
         model = Delivery
         fields = [
-            "id", "order", "driver", "driver_detail", "status",
-            "picked_up_at", "delivered_at", "last_position", "eta_seconds",
+            "id", "reference", "order", "driver", "driver_detail", "status",
+            "partner", "partner_detail", "picked_up_at", "delivered_at",
+            "last_position", "eta_seconds", "timeline",
+            "proof_method", "proof_note", "proof_photo", "proof_latitude",
+            "proof_longitude", "proof_recorded_at",
+            "failure_reason", "failure_comment", "return_reason", "refuse_reason",
             "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "order", "created_at", "updated_at", "last_position", "eta_seconds"]
+        read_only_fields = [
+            "id", "reference", "order", "created_at", "updated_at",
+            "last_position", "eta_seconds", "timeline",
+        ]
 
     def get_last_position(self, obj):
         tracking = obj.trackings.first()
@@ -79,6 +115,106 @@ class DeliverySerializer(serializers.ModelSerializer):
 
     def get_eta_seconds(self, obj):
         return obj.eta_seconds()
+
+    def get_partner_detail(self, obj):
+        if not obj.partner_id:
+            return None
+        return {
+            "id": str(obj.partner_id),
+            "name": obj.partner.name,
+            "phone": obj.partner.contact_phone,
+        }
+
+    def get_timeline(self, obj):
+        events = obj.events.values(
+            "action", "actor_role", "previous_status", "new_status",
+            "comment", "created_at",
+        )
+        return list(events)
+
+
+class DeliveryPartnerSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DeliveryPartner
+        fields = [
+            "id", "name", "contact_name", "contact_email", "contact_phone",
+            "address", "city", "status", "score",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "score", "created_at", "updated_at"]
+
+
+class DeliveryPartnerDetailSerializer(DeliveryPartnerSerializer):
+    drivers_count = serializers.SerializerMethodField()
+    deliveries_count = serializers.SerializerMethodField()
+    delivered_count = serializers.SerializerMethodField()
+    success_rate = serializers.SerializerMethodField()
+    return_rate = serializers.SerializerMethodField()
+    active_zones = serializers.SerializerMethodField()
+
+    class Meta(DeliveryPartnerSerializer.Meta):
+        fields = [
+            "id", "name", "contact_name", "contact_email", "contact_phone",
+            "address", "city", "status", "score",
+            "drivers_count", "deliveries_count", "delivered_count",
+            "success_rate", "return_rate", "active_zones",
+            "created_at", "updated_at",
+        ]
+
+    def get_drivers_count(self, obj):
+        return obj.drivers.count()
+
+    def get_deliveries_count(self, obj):
+        return obj.deliveries.count()
+
+    def get_delivered_count(self, obj):
+        return obj.deliveries.filter(status=Delivery.Status.DELIVERED).count()
+
+    def get_success_rate(self, obj):
+        return obj.success_rate()
+
+    def get_return_rate(self, obj):
+        return obj.return_rate()
+
+    def get_active_zones(self, obj):
+        return [
+            {"id": str(zp.zone_id), "name": zp.zone.name, "client_fee": str(zp.client_fee)}
+            for zp in obj.zone_pricings.select_related("zone").filter(is_available=True)
+        ]
+
+
+class PartnerZonePricingSerializer(serializers.ModelSerializer):
+    zone_name = serializers.CharField(source="zone.name", read_only=True)
+
+    class Meta:
+        model = PartnerZonePricing
+        fields = [
+            "id", "partner", "zone", "zone_name", "client_fee", "partner_cost",
+            "estimated_delay_minutes", "max_weight_kg", "is_available", "margin",
+        ]
+        read_only_fields = ["id", "zone_name", "margin"]
+        extra_kwargs = {"partner": {"read_only": True}}
+
+
+class PartnerInvoiceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PartnerInvoice
+        fields = [
+            "id", "partner", "reference", "status", "period_start", "period_end",
+            "due_date", "marketplace_rate", "on_demand_rate",
+            "marketplace_deliveries_count", "on_demand_deliveries_count",
+            "marketplace_amount", "on_demand_amount", "collection_fees",
+            "total_due", "balance", "recon_amount", "recon_diff", "recon_date",
+            "paid_at", "created_at", "updated_at",
+        ]
+        read_only_fields = [
+            "id", "reference", "status", "marketplace_rate", "on_demand_rate",
+            "marketplace_deliveries_count", "on_demand_deliveries_count",
+            "marketplace_amount", "on_demand_amount", "collection_fees",
+            "total_due", "balance", "recon_amount", "recon_diff", "recon_date",
+            "paid_at", "created_at", "updated_at",
+        ]
+        extra_kwargs = {"partner": {"read_only": True}}
 
 
 class OrderItemSerializer(serializers.ModelSerializer):

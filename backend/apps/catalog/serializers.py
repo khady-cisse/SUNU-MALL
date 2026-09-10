@@ -2,6 +2,7 @@ import uuid
 
 from rest_framework import serializers
 from .models import Category, Inventory, Product, ProductImage, ProductVariant, Review, Store, StoreCategory, StoreSettings
+from apps.kyc.models import SellerKYC
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -45,6 +46,10 @@ class StoreSerializer(serializers.ModelSerializer):
     rating = serializers.FloatField(read_only=True, default=None)
     review_count = serializers.IntegerField(read_only=True, default=0)
     category_names = serializers.SerializerMethodField()
+    # Badge "Vendeur vérifié" généré BACKEND (spec §9) : l'annotation
+    # Exists le fournit sur les querysets de liste ; sinon le champ se calcule
+    # à la volée pour un objet isolé.
+    is_verified_seller = serializers.SerializerMethodField()
 
     class Meta:
         model = Store
@@ -52,7 +57,8 @@ class StoreSerializer(serializers.ModelSerializer):
             "id", "owner", "owner_email", "category", "category_detail", "name",
             "phone", "description", "address", "city", "rejection_reason",
             "logo_url", "banner_url", "status", "latitude", "longitude", "rating", "review_count",
-            "category_names", "created_at", "updated_at",
+            "category_names", "is_verified_seller",
+            "created_at", "updated_at",
         ]
         read_only_fields = [
             "id", "owner", "created_at", "updated_at", "owner_email",
@@ -75,6 +81,14 @@ class StoreSerializer(serializers.ModelSerializer):
             .values_list("category__name", flat=True)
             .distinct()
         )
+
+    def get_is_verified_seller(self, obj):
+        annotated = getattr(obj, "is_verified_seller", None)
+        if annotated is not None:
+            return annotated
+        return SellerKYC.objects.filter(
+            seller_id=obj.owner_id, status=SellerKYC.Status.VERIFIED,
+        ).exists()
 
 
 class StoreSettingsSerializer(serializers.ModelSerializer):
@@ -144,12 +158,23 @@ class ProductSerializer(serializers.ModelSerializer):
     images = ProductImageSerializer(many=True, read_only=True)
     variants = ProductVariantSerializer(many=True, read_only=True)
     store_name = serializers.CharField(source='store.name', read_only=True)
+    # Badge boutique "vendeur vérifié" sur la tuile produit (spec §9) — même
+    # mécanique que StoreSerializer.is_verified_seller.
+    store_is_verified = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
         fields = [
-            "id", "store", "store_name", "category", "brand", "name", "description",
+            "id", "store", "store_name", "store_is_verified", "category", "brand", "name", "description",
             "base_price", "status", "images", "variants",
             "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
+
+    def get_store_is_verified(self, obj):
+        annotated = getattr(obj, "store_is_verified", None)
+        if annotated is not None:
+            return annotated
+        return SellerKYC.objects.filter(
+            seller_id=obj.store.owner_id, status=SellerKYC.Status.VERIFIED,
+        ).exists()

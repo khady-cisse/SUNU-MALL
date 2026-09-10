@@ -7,6 +7,7 @@ import { ImagePlus, Sparkles, Store as StoreIcon, TriangleAlert } from "lucide-r
 import { useAsync } from "@/hooks/useAsync";
 import * as catalogApi from "@/api/catalog";
 import * as iaApi from "@/api/ia";
+import * as monetizationApi from "@/api/monetization";
 import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
 import { Select } from "@/components/ui/Select";
@@ -15,6 +16,7 @@ import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
 import { ApiError } from "@/lib/api";
+import { ProductLimitBanner } from "@/components/merchant/ProductLimitBanner";
 
 const schema = z.object({
   store: z.string().min(1, "Boutique requise"),
@@ -31,6 +33,7 @@ export default function AddProductPage() {
   const navigate = useNavigate();
   const { data: own, loading: loadingStores } = useAsync(() => catalogApi.listMyStores(), []);
   const { data: categories } = useAsync(() => catalogApi.listCategories(), []);
+  const { data: account } = useAsync(() => monetizationApi.getMySubscriptionState(), []);
   const [error, setError] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -126,6 +129,7 @@ export default function AddProductPage() {
   return (
     <div className="max-w-xl">
       <h1 className="mb-6 font-display text-2xl font-bold text-gray-900">Ajouter un produit</h1>
+      <ProductLimitBanner account={account} className="mb-4" />
       <Card>
         <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
           <div>

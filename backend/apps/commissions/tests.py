@@ -25,6 +25,35 @@ from rest_framework.test import APIClient
 
 User = get_user_model()
 
+# En doublon de monetization/migrations/0009_* (voir 0008) : les runs locaux en
+# `--nomigrations` ne jouent pas les data migrations, il faut donc réinsérer
+# les trois plans STARTER/PRO/BUSINESS, sinon resolve_rate retombe sur 0 %
+# (offre vide). Lancement V1 : commission SUNU MALL à 0 %.
+SEEDED_PLANS = [
+    {"name": "STARTER", "code": "STARTER", "price": 2500, "commission_rate": 0, "max_products": 10},
+    {"name": "PRO", "code": "PRO", "price": 5000, "commission_rate": 0, "max_products": 30},
+    {"name": "BUSINESS", "code": "BUSINESS", "price": 10000, "commission_rate": 0, "max_products": None},
+]
+
+
+def _seed_plans():
+    from apps.monetization.models import SubscriptionPlan
+
+    for plan in SEEDED_PLANS:
+        SubscriptionPlan.objects.update_or_create(
+            name=plan["name"],
+            defaults={
+                "code": plan["code"],
+                "price": plan["price"],
+                "billing_cycle": "monthly",
+                "features": {},
+                "max_products": plan["max_products"],
+                "commission_rate": plan["commission_rate"],
+                "duration_days": 30,
+                "is_active": True,
+            },
+        )
+
 
 @override_settings(PAYMENT_SANDBOX=True)
 class CommissionTestCase(TestCase):
@@ -32,6 +61,7 @@ class CommissionTestCase(TestCase):
         Role.objects.get_or_create(name=Role.RoleName.MERCHANT)
         Role.objects.get_or_create(name=Role.RoleName.CLIENT)
         Role.objects.get_or_create(name=Role.RoleName.ADMIN)
+        _seed_plans()
         self.seller = self.create_seller("seller@example.com")
         self.customer = self.create_customer("customer@example.com")
 
@@ -116,7 +146,7 @@ class CommissionTestCase(TestCase):
             document_back="kyc/seller/x/back.jpg",
         )
 
-    def _subscribe(self, seller, plan_name="BASIC"):
+    def _subscribe(self, seller, plan_name="STARTER"):
         entitlement = SellerSubscription.get_or_create_for(seller)
         now = timezone.now()
         entitlement.apply_paid_plan(plan_name, now - timedelta(days=1), now + timedelta(days=29))
@@ -132,16 +162,16 @@ class CommissionTests(CommissionTestCase):
         self.assertEqual(tx.seller_amount, order.total_amount)
 
     def test_plan_rate_applied_and_frozen(self):
-        self._subscribe(self.seller, "BASIC")
+        # Lancement V1 : commission SUNU MALL à 0 % quelle que soit la formule.
+        self._subscribe(self.seller, "STARTER")
         order = self.make_paid_order(self.seller)
         tx = CommissionTransaction.objects.get(order=order)
-        expected_gross = order.total_amount - order.delivery_fee
-        expected_commission = expected_gross * Decimal("0.05")
-        self.assertEqual(tx.commission_rate, Decimal("5.00"))
-        self.assertEqual(tx.commission_amount, expected_commission)
+        self.assertEqual(tx.commission_rate, Decimal("0"))
+        self.assertEqual(tx.commission_amount, Decimal("0"))
+        self.assertEqual(tx.seller_amount, order.total_amount)
         self._subscribe(self.seller, "BUSINESS")
         tx.refresh_from_db()
-        self.assertEqual(tx.commission_rate, Decimal("5.00"))
+        self.assertEqual(tx.commission_rate, Decimal("0"))
 
     def test_platform_wallet_credit_and_seller_pending(self):
         self._subscribe(self.seller, "PRO")
@@ -154,7 +184,7 @@ class CommissionTests(CommissionTestCase):
         self.assertEqual(platform.total_commissions, tx.commission_amount)
 
     def test_settlement_is_idempotent(self):
-        self._subscribe(self.seller, "BASIC")
+        self._subscribe(self.seller, "STARTER")
         order = self.make_paid_order(self.seller)
         before = CommissionTransaction.objects.get(order=order)
         self.payment_for(order).mark_succeeded()
@@ -163,17 +193,17 @@ class CommissionTests(CommissionTestCase):
         self.assertEqual(wallet.pending_balance, before.seller_amount)
 
     def test_gross_recomputed_from_db_not_client(self):
-        self._subscribe(self.seller, "BASIC")
+        self._subscribe(self.seller, "STARTER")
         order = self.make_paid_order(self.seller, items=[("Big", "10000"), ("Small", "5000")])
         order.total_amount = Decimal("99999")
         order.save(update_fields=["total_amount"])
         tx = CommissionTransaction.objects.get(order=order)
         expected_gross = Decimal("10000") + Decimal("5000")
         self.assertEqual(tx.gross_amount, expected_gross)
-        self.assertEqual(tx.commission_amount, expected_gross * Decimal("0.05"))
+        self.assertEqual(tx.commission_amount, Decimal("0"))
 
     def test_refund_reverses_commission_and_seller_funds(self):
-        self._subscribe(self.seller, "BASIC")
+        self._subscribe(self.seller, "STARTER")
         order = self.make_paid_order(self.seller, items=[("A", "10000")])
         tx = CommissionTransaction.objects.get(order=order)
         wallet = SellerWallet.objects.get(seller=self.seller)
@@ -192,7 +222,7 @@ class CommissionTests(CommissionTestCase):
         self.assertEqual(platform.total_commissions, commissions_before - tx.commission_amount)
 
     def test_refund_can_drive_wallet_negative_when_withdrawn(self):
-        self._subscribe(self.seller, "BASIC")
+        self._subscribe(self.seller, "STARTER")
         order = self.make_paid_order(self.seller, items=[("A", "10000")])
         tx = CommissionTransaction.objects.get(order=order)
         wallet = SellerWallet.objects.get(seller=self.seller)
@@ -208,7 +238,7 @@ class CommissionTests(CommissionTestCase):
         self.assertEqual(wallet.available_balance, -tx.seller_amount)
 
     def test_release_moves_pending_to_available_after_delay(self):
-        self._subscribe(self.seller, "BASIC")
+        self._subscribe(self.seller, "STARTER")
         order = self.make_paid_order(self.seller)
         tx = CommissionTransaction.objects.get(order=order)
         wallet = SellerWallet.objects.get(seller=self.seller)
@@ -230,7 +260,7 @@ class CommissionTests(CommissionTestCase):
         self.assertEqual(services.release_pending_funds(at=timezone.now()), 0)
 
     def test_payout_requires_kyc_and_available_balance(self):
-        self._subscribe(self.seller, "BASIC")
+        self._subscribe(self.seller, "STARTER")
         with self.assertRaises(services.PayoutError):
             services.request_payout(self.seller, Decimal("100"))
 
@@ -253,19 +283,20 @@ class CommissionTests(CommissionTestCase):
             services.request_payout(self.seller, Decimal("5000"))
 
     def test_unique_order_seller_prevents_duplicate(self):
-        self._subscribe(self.seller, "BASIC")
+        self._subscribe(self.seller, "STARTER")
         order = self.make_paid_order(self.seller)
         with self.assertRaises(Exception):
             CommissionTransaction.objects.create(
-                order=order, seller=self.seller, plan="BASIC",
+                order=order, seller=self.seller, plan="STARTER",
                 gross_amount=Decimal("100"), commission_rate=Decimal("5"),
                 commission_amount=Decimal("5"), seller_amount=Decimal("95"),
             )
 
     def test_gate_blocks_sales_after_grace_period(self):
+        self.verify_seller_kyc(self.seller)
         entitlement = SellerSubscription.get_or_create_for(self.seller)
         entitlement.status = SellerSubscription.Status.EXPIRED
-        entitlement.plan = "BASIC"
+        entitlement.plan = "STARTER"
         entitlement.trial_ends_at = timezone.now() - timedelta(days=40)
         entitlement.ends_at = timezone.now() - timedelta(days=40)
         entitlement.save()
@@ -282,7 +313,7 @@ class CommissionTests(CommissionTestCase):
         self.make_paid_order(self.seller, items=[("A", "10000")])
         self.make_paid_order(seller2, variant=variant2, items=[("V2", "15000")])
 
-        self._subscribe(self.seller, "BASIC")
+        self._subscribe(self.seller, "STARTER")
         self._subscribe(seller2, "PRO")
 
         wallet1 = SellerWallet.objects.get(seller=self.seller)
@@ -307,13 +338,13 @@ class CommissionApiTests(CommissionTestCase):
         return self.client
 
     def test_wallet_me_returns_balances_and_subscription(self):
-        self._subscribe(self.seller, "BASIC")
+        self._subscribe(self.seller, "STARTER")
         self.make_paid_order(self.seller, items=[("Dashboard", "10000")])
         response = self._as(self.seller).get("/api/commissions/wallet/me/")
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertIn("wallet", data)
-        self.assertEqual(data["subscription"]["plan"], "BASIC")
+        self.assertEqual(data["subscription"]["plan"], "STARTER")
         self.assertEqual(data["subscription"]["status"], "active")
         self.assertEqual(len(data["recent_sales"]), 1)
 
@@ -325,9 +356,9 @@ class CommissionApiTests(CommissionTestCase):
         self.assertEqual(data["subscription"]["rate"], "0.00")
 
     def test_admin_commission_transactions_filtered(self):
-        self._subscribe(self.seller, "BASIC")
+        self._subscribe(self.seller, "STARTER")
         self.make_paid_order(self.seller, items=[("Filtré", "10000")])
-        response = self._as(self.admin).get("/api/commissions/commissions/", {"plan": "BASIC"})
+        response = self._as(self.admin).get("/api/commissions/commissions/", {"plan": "STARTER"})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["count"], 1)
         # Un commerçant ne voit que ses propres ventes.
@@ -340,11 +371,12 @@ class CommissionApiTests(CommissionTestCase):
         response = self._as(self.admin).get("/api/commissions/commissions/stats/")
         self.assertEqual(response.status_code, 200)
         data = response.json()
-        self.assertEqual(data["total_commissions"], "600.00")
+        # Lancement V1 : commission 0 % → aucun revenu de commission.
+        self.assertEqual(data["total_commissions"], "0.00")
 
     def test_payout_flow_end_to_end(self):
         # Vente réglée → livrée → libérée → le vendeur retire de son solde disponible.
-        self._subscribe(self.seller, "BASIC")
+        self._subscribe(self.seller, "STARTER")
         self.verify_seller_kyc(self.seller)
         order = self.make_paid_order(self.seller, items=[("Retrait", "20000")])
         delivery = Delivery.objects.get(order=order)

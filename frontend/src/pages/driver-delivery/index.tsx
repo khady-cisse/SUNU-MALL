@@ -1,28 +1,43 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { CheckCircle2, Copy, KeyRound, MapPin, Navigation, PackageSearch, RotateCcw, Satellite, Truck } from "lucide-react";
+import {
+  AlertTriangle, CheckCircle2, Copy, KeyRound, MapPin, Navigation,
+  PackageSearch, PackageX, RotateCcw, Satellite, ThumbsDown, ThumbsUp, Truck, XCircle,
+} from "lucide-react";
 import { useAsync } from "@/hooks/useAsync";
 import * as ordersApi from "@/api/orders";
-import { ApiError } from "@/lib/api";
+import { apiErrorMessage, ApiError } from "@/lib/api";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { formatDate, formatPrice } from "@/lib/utils";
+import { formatDate } from "@/lib/utils";
+import { DELIVERY_FAILURE_REASONS, DELIVERY_RETURN_REASONS, deliveryStatusLabel } from "@/lib/delivery";
 import type { DeliveryStatus } from "@/types";
 
 const DeliveryMap = lazy(() => import("@/components/marketplace/DeliveryMap").then((m) => ({ default: m.DeliveryMap })));
 
-// Le livreur fait progresser sa course jusqu'à « colis récupéré ». La remise
-// finale (« livré ») est validée par le CLIENT avec le code OTP remis en main
-// propre (page « Confirmer la livraison »), jamais par le livreur.
+// Chaîne 2025 (spec §5) : assigned → accepté → en route vers la boutique →
+// colis récupéré → en transit → en livraison. La remise finale (« livré »)
+// est validée par le CLIENT avec le code OTP remis en main propre (page
+// « Confirmer la livraison »), jamais par le livreur. Le refus, l'échec et le
+// retour passent par leurs actions dédiées.
 const NEXT_STATUS: Partial<Record<DeliveryStatus, DeliveryStatus>> = {
-  assigned: "picked_up",
+  accepted: "pickup_pending",
+  pickup_pending: "picked_up",
+  picked_up: "in_transit",
+  in_transit: "out_for_delivery",
 };
 
 const NEXT_LABEL: Partial<Record<DeliveryStatus, string>> = {
-  assigned: "Marquer « colis récupéré »",
+  accepted: "Marquer « en route vers la boutique »",
+  pickup_pending: "Marquer « colis récupéré »",
+  picked_up: "Marquer « en transit »",
+  in_transit: "Marquer « en livraison »",
 };
+
+const TERMINAL = new Set(["delivered", "delivery_failed", "customer_unavailable", "returned", "cancelled"]);
+const FAIL_FAILABLE = new Set(["picked_up", "in_transit", "out_for_delivery"]);
 
 export default function DriverDeliveryPage() {
   const [searchParams] = useSearchParams();
@@ -35,6 +50,11 @@ export default function DriverDeliveryPage() {
   const [codeMessage, setCodeMessage] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [panel, setPanel] = useState<"refuse" | "fail" | "return" | null>(null);
+  const [reason, setReason] = useState("");
+  const [comment, setComment] = useState("");
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [acting, setActing] = useState(false);
   const lastSentAt = useRef(0);
 
   const { data: delivery, loading: loadingDelivery, refetch } = useAsync(
@@ -105,6 +125,42 @@ export default function DriverDeliveryPage() {
     }
   }
 
+  async function acceptMission() {
+    if (!deliveryId) return;
+    setActing(true);
+    setActionError(null);
+    try {
+      await ordersApi.acceptDelivery(deliveryId);
+      refetch();
+    } catch (err) {
+      setActionError(apiErrorMessage(err, "Impossible d'accepter la mission."));
+    } finally {
+      setActing(false);
+    }
+  }
+
+  async function submitPanel(kind: "refuse" | "fail" | "return") {
+    if (!deliveryId || !reason) {
+      setActionError("Choisissez un motif.");
+      return;
+    }
+    setActing(true);
+    setActionError(null);
+    try {
+      if (kind === "refuse") await ordersApi.refuseDelivery(deliveryId, reason, comment);
+      if (kind === "fail") await ordersApi.failDelivery(deliveryId, reason, comment);
+      if (kind === "return") await ordersApi.requestDeliveryReturn(deliveryId, reason, comment);
+      setPanel(null);
+      setReason("");
+      setComment("");
+      refetch();
+    } catch (err) {
+      setActionError(apiErrorMessage(err, "L'action a échoué."));
+    } finally {
+      setActing(false);
+    }
+  }
+
   async function regenerateCode() {
     if (!deliveryId) return;
     setRegenerating(true);
@@ -171,6 +227,13 @@ export default function DriverDeliveryPage() {
         }
       : null;
 
+  const refusePanel = panel === "refuse";
+  const failPanel = panel === "fail";
+  const returnPanel = panel === "return";
+  const reasonOptions = Object.entries(
+    panel === "return" ? DELIVERY_RETURN_REASONS : DELIVERY_FAILURE_REASONS,
+  );
+
   return (
     <div className="flex flex-col gap-6">
       <h1 className="flex items-center gap-2 font-display text-2xl font-bold text-gray-900">
@@ -185,7 +248,7 @@ export default function DriverDeliveryPage() {
               <MapPin className="h-4 w-4 shrink-0 text-orange" />
               {order.address_detail?.street}, {order.address_detail?.city}
             </div>
-            <p className="text-sm font-bold text-orange">{formatPrice(order.total_amount)}</p>
+            <p className="text-sm font-bold text-orange">{order.total_amount}</p>
           </>
         )}
 
@@ -200,8 +263,60 @@ export default function DriverDeliveryPage() {
         )}
 
         <p className="border-t border-border pt-3 text-sm">
-          Statut actuel : <strong className="text-ink">{delivery.status}</strong>
+          Statut actuel : <strong className="text-ink">{deliveryStatusLabel(delivery.status)}</strong>
         </p>
+
+        {delivery.status === "assigned" && (
+          <div className="flex flex-col gap-2 rounded-lg border border-accent bg-muted/40 p-3">
+            <p className="text-sm text-muted-foreground">
+              Une mission vous est assignée. Acceptez-la pour prendre le relais, ou refusez-la avec un motif.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={acceptMission} loading={acting}>
+                <ThumbsUp className="h-4 w-4" />
+                Accepter la mission
+              </Button>
+              <Button variant="secondary" onClick={() => setPanel(refusePanel ? null : "refuse")}>
+                <ThumbsDown className="h-4 w-4" />
+                Refuser la mission
+              </Button>
+            </div>
+            {refusePanel && (
+              <div className="flex flex-col gap-3 border-t border-border pt-3">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-sm font-medium text-ink">Motif du refus</span>
+                  <select
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    className="focus-ring w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-ink"
+                  >
+                    <option value="">Sélectionnez un motif…</option>
+                    {Object.entries(DELIVERY_FAILURE_REASONS).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <input
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  placeholder="Commentaire (facultatif)"
+                  className="focus-ring w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-ink"
+                />
+                {actionError && <p className="text-xs text-danger">{actionError}</p>}
+                <div className="flex gap-2">
+                  <Button size="sm" variant="danger" onClick={() => submitPanel("refuse")} loading={acting}>
+                    Confirmer le refus
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setPanel(null)}>
+                    Annuler
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {delivery.status === "picked_up" && (
           <div className="flex flex-col gap-3 rounded-lg border border-accent bg-muted/40 p-3">
@@ -221,8 +336,8 @@ export default function DriverDeliveryPage() {
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">
-                Le code a été affiché à la récupération du colis et n'est pas ré-envoyé par sécurité. Récupérez-le depuis l'historique
-                de cet écran ou régénérez-le.
+                Le code a été affiché à la récupération du colis et n'est pas ré-envoyé par sécurité. Récupérez-le depuis
+                l'historique de cet écran ou régénérez-le.
               </p>
             )}
             <Button variant="secondary" size="sm" onClick={regenerateCode} loading={regenerating} className="w-fit">
@@ -240,11 +355,113 @@ export default function DriverDeliveryPage() {
         ) : (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             {delivery.status === "delivered" && <CheckCircle2 className="h-4 w-4 text-success" />}
-            {delivery.status === "delivered" ? "Course terminée : le client a confirmé la réception." : "En attente d'affectation par le commerçant."}
+            {delivery.status === "delivered"
+              ? "Course terminée : le client a confirmé la réception."
+              : delivery.status === "pending"
+                ? "En attente d'affectation par le commerçant."
+                : TERMINAL.has(delivery.status)
+                  ? "Course terminée."
+                  : ""}
           </p>
         )}
 
-        {(delivery.status === "assigned" || delivery.status === "picked_up") && (
+        {FAIL_FAILABLE.has(delivery.status) && (
+          <>
+            <div className="flex flex-wrap gap-2 border-t border-border pt-3">
+              <Button variant="secondary" onClick={() => setPanel(failPanel ? null : "fail")}>
+                <XCircle className="h-4 w-4" />
+                Signaler un échec
+              </Button>
+              <Button variant="secondary" onClick={() => setPanel(returnPanel ? null : "return")}>
+                <PackageX className="h-4 w-4" />
+                Demander le retour du colis
+              </Button>
+            </div>
+
+            {failPanel && (
+              <div className="flex flex-col gap-3 rounded-lg border border-danger/30 bg-red-50 p-3">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-sm font-medium text-ink">Motif de l'échec</span>
+                  <select
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    className="focus-ring w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-ink"
+                  >
+                    <option value="">Sélectionnez un motif…</option>
+                    {reasonOptions.map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <input
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  placeholder="Détails (obligatoire pour un échec)"
+                  className="focus-ring w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-ink"
+                />
+                {actionError && <p className="text-xs text-danger">{actionError}</p>}
+                <div className="flex gap-2">
+                  <Button size="sm" variant="danger" onClick={() => submitPanel("fail")} loading={acting}>
+                    <AlertTriangle className="h-4 w-4" />
+                    Confirmer l'échec
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setPanel(null)}>
+                    Annuler
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {returnPanel && (
+              <div className="flex flex-col gap-3 rounded-lg border border-warning/30 bg-amber-50 p-3">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-sm font-medium text-ink">Motif du retour</span>
+                  <select
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    className="focus-ring w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-ink"
+                  >
+                    <option value="">Sélectionnez un motif…</option>
+                    {reasonOptions.map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <input
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  placeholder="Commentaire (facultatif)"
+                  className="focus-ring w-full rounded-lg border border-border bg-white px-3 py-2 text-sm text-ink"
+                />
+                {actionError && <p className="text-xs text-danger">{actionError}</p>}
+                <div className="flex gap-2">
+                  <Button size="sm" variant="danger" onClick={() => submitPanel("return")} loading={acting}>
+                    <PackageX className="h-4 w-4" />
+                    Confirmer la demande de retour
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setPanel(null)}>
+                    Annuler
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {actionError && !failPanel && !returnPanel && !refusePanel && (
+          <p className="text-sm text-danger">{actionError}</p>
+        )}
+
+        {(delivery.status === "assigned" ||
+          delivery.status === "accepted" ||
+          delivery.status === "pickup_pending" ||
+          delivery.status === "picked_up" ||
+          delivery.status === "in_transit" ||
+          delivery.status === "out_for_delivery") && (
           <>
             <Button variant="secondary" onClick={sharePosition} loading={sharingPosition}>
               <Navigation className="h-4 w-4" />

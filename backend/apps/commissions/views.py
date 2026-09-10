@@ -69,7 +69,7 @@ class CommissionTransactionViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = CommissionTransaction.objects.select_related("order__store", "order__customer")
-        if not user.has_role(Role.RoleName.ADMIN):
+        if not user.is_admin():
             qs = qs.filter(seller=user)
             return qs
         params = self.request.query_params
@@ -179,7 +179,7 @@ class PayoutViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.has_role(Role.RoleName.ADMIN):
+        if user.is_admin():
             return Payout.objects.all()
         return Payout.objects.filter(seller=user)
 

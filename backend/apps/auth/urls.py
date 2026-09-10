@@ -13,6 +13,9 @@ from .views import (
     GuestCheckoutView,
     SetPasswordView,
     ChangePasswordView,
+    RequestPhoneOTPView,
+    VerifyPhoneOTPView,
+    LogoutView,
 )
 
 urlpatterns = [
@@ -23,6 +26,9 @@ urlpatterns = [
     path('guest-checkout/', GuestCheckoutView.as_view(), name='auth_guest_checkout'),
     path('set-password/', SetPasswordView.as_view(), name='auth_set_password'),
     path('change-password/', ChangePasswordView.as_view(), name='auth_change_password'),
+    path('request-phone-otp/', RequestPhoneOTPView.as_view(), name='auth_request_phone_otp'),
+    path('verify-phone-otp/', VerifyPhoneOTPView.as_view(), name='auth_verify_phone_otp'),
+    path('logout/', LogoutView.as_view(), name='auth_logout'),
     path('token/', VerifiedTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('token/verify/', TokenVerifyView.as_view(), name='token_verify'),

@@ -50,9 +50,24 @@ def get_or_create_seller_subscription(seller):
 
 
 def can_receive_orders(seller, at=None):
-    """Un vendeur sans essai ni plan actif, hors période de grâce, ne reçoit plus de commande."""
-    if seller.has_role(Role.RoleName.ADMIN):
+    """Un vendeur sans essai ni plan actif, hors période de grâce ou suspendu,
+    ne reçoit plus de commande (spec monétisation §11).
+
+    Vérifie aussi le gating KYC (spec §8, §21) : une identité non vérifiée,
+    suspendue ou bloquée coupe immédiatement la capacité à recevoir des
+    commandes — indépendamment de l'abonnement payé.
+    """
+    if seller.is_admin():
         return True
+    if not seller_kyc_verified(seller):
+        return False
+    # Abonnement monetization suspendu par un admin → coupe immédiatement la
+    # vente, même si l'entitlement n'a pas encore été synchronisé.
+    if Subscription.objects.filter(
+        subscriber_type="merchant", subscriber_id=seller.id,
+        status=Subscription.Status.SUSPENDED,
+    ).exists():
+        return False
     subscription = SellerSubscription.get_or_create_for(seller)
     return subscription.entitlement(at)["allowed"]
 
@@ -82,6 +97,8 @@ def sync_plan_from_subscription(monet_subscription):
         entitlement.mark_expired()
     elif monet_subscription.status == Subscription.Status.CANCELLED:
         entitlement.mark_cancelled()
+    elif monet_subscription.status == Subscription.Status.SUSPENDED:
+        entitlement.mark_suspended()
 
 
 def _resolve(seller, at=None):

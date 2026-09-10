@@ -69,6 +69,22 @@ docker compose -f infra/docker-compose.dev.yml up --build -d
 docker compose -f infra/docker-compose.dev.yml logs -f backend
 ```
 
+### 3bis. Comptes de démonstration
+
+```bash
+# Compte administrateur de la plateforme (rôle admin, email vérifié)
+docker compose -f infra/docker-compose.dev.yml exec backend python manage.py create_admin
+#   → admin@sunumall.com / Admin@12345  (—super-admin pour accorder aussi le rôle super_admin)
+
+# Marketplace de démo : boutiques, produits, avis (idempotent)
+docker compose -f infra/docker-compose.dev.yml exec backend python manage.py seed_demo
+#   → demo.vendeurN@sunumall.com / Demo@12345  et  demo.clientN@sunumall.com / Demo@12345
+```
+
+> **Attention** : `admin@sunumall.com` est aussi l'identifiant par défaut de la
+> console **PgAdmin** (base de données, mot de passe `admin`) — ce n'est pas le
+> même compte que l'administrateur de la plateforme créé ci-dessus.
+
 ---
 
 ## 🌐 Adresses des Services et Consoles

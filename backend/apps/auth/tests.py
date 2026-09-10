@@ -10,6 +10,7 @@ from django.core import mail
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 from apps.kyc.models import SellerKYC
@@ -636,3 +637,138 @@ class ChangePasswordTests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data["user"]["must_change_password"])
+
+
+@override_settings(PHONE_OTP_REVEAL_CODE=True)
+@override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+class PhoneOTPTests(TestCase):
+    """Vérification du numéro de téléphone par code OTP (spec §14)."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username="otp@example.com",
+            email="otp@example.com",
+            password="testpassword123",
+            is_verified=True,
+            phone="+221771234567",
+        )
+
+    def test_request_otp_returns_code_in_dev_and_sets_expiry(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.post("/api/auth/request-phone-otp/", {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        code = response.data["debug_code"]
+        self.assertRegex(code, r"^\d{6}$")
+
+        otp = self.user.phone_otps.latest("created_at")
+        self.assertIsNotNone(otp.expires_at)
+        self.assertNotEqual(otp.code_hash, code)  # jamais stocké en clair
+
+    def test_verify_otp_marks_phone_verified(self):
+        self.client.force_authenticate(self.user)
+        code = self.client.post("/api/auth/request-phone-otp/", {}, format="json").data["debug_code"]
+        response = self.client.post("/api/auth/verify-phone-otp/", {"code": code}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.phone_verified)
+        self.assertIsNotNone(self.user.phone_verified_at)
+
+    def test_wrong_code_consumes_attempt_then_blocks(self):
+        self.client.force_authenticate(self.user)
+        request_code = self.client.post("/api/auth/request-phone-otp/", {}, format="json").data["debug_code"]
+        otp = self.user.phone_otps.latest("created_at")
+
+        for _ in range(settings.PHONE_OTP_MAX_ATTEMPTS):
+            response = self.client.post("/api/auth/verify-phone-otp/", {"code": "000000"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Code incorrect", str(response.data))
+
+        # Même le bon code est refusé (compteur d'essais épuisé).
+        blocked = self.client.post("/api/auth/verify-phone-otp/", {"code": request_code}, format="json")
+        self.assertEqual(blocked.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_expired_code_is_rejected(self):
+        self.client.force_authenticate(self.user)
+        self.client.post("/api/auth/request-phone-otp/", {}, format="json")
+        otp = self.user.phone_otps.latest("created_at")
+        otp.expires_at = timezone.now() - timezone.timedelta(minutes=1)
+        otp.save(update_fields=["expires_at"])
+
+        response = self.client.post("/api/auth/verify-phone-otp/", {"code": "123456"}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("expiré", str(response.data))
+
+    def test_already_verified_account_cannot_request_new_otp(self):
+        self.user.phone_verified = True
+        self.user.save()
+        self.client.force_authenticate(self.user)
+        response = self.client.post("/api/auth/request-phone-otp/", {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_prod_never_reveals_code(self):
+        with override_settings(PHONE_OTP_REVEAL_CODE=False):
+            self.client.force_authenticate(self.user)
+            response = self.client.post("/api/auth/request-phone-otp/", {}, format="json")
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+            self.assertNotIn("debug_code", response.data)
+
+
+class SecurityLoggingTests(TestCase):
+    """Les actions sensibles laissent une trace dans le journal de sécurité (spec §16)."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username="log@example.com",
+            email="log@example.com",
+            password="testpassword123",
+            is_verified=True,
+        )
+        Role.objects.get_or_create(name=Role.RoleName.CLIENT)
+        UserRole.objects.create(user=self.user, role=Role.objects.get(name=Role.RoleName.CLIENT))
+
+    def _log(self, action, user=None):
+        from apps.security.models import SecurityLog
+        return SecurityLog.objects.filter(user=user or self.user, action=action).first()
+
+    def test_login_writes_security_log(self):
+        response = self.client.post(
+            "/api/auth/login/",
+            {"email": "log@example.com", "password": "testpassword123"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsNotNone(self._log("LOGIN"))
+
+    def test_logout_blacklists_token_and_logs(self):
+        token = self.client.post(
+            "/api/auth/login/",
+            {"email": "log@example.com", "password": "testpassword123"},
+            format="json",
+        ).data["refresh"]
+        self.client.force_authenticate(self.user)
+
+        response = self.client.post("/api/auth/logout/", {"refresh": token}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsNotNone(self._log("LOGOUT"))
+
+        # Le refresh révoqué ne peut plus produire de nouvel access token.
+        refresh_response = self.client.post(
+            "/api/auth/token/refresh/", {"refresh": token}, format="json"
+        )
+        self.assertEqual(refresh_response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_change_password_writes_security_log(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.post(
+            "/api/auth/change-password/",
+            {
+                "current_password": "testpassword123",
+                "new_password": "newpassword456",
+                "confirm_password": "newpassword456",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsNotNone(self._log("PASSWORD_CHANGE"))

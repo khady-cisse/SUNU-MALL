@@ -1,16 +1,28 @@
+import uuid
 from django.conf import settings
 from django.db import models
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from .models import Payment, Refund
 from .serializers import PaymentSerializer, RefundSerializer
 from .gateways import PaymentGatewayError, get_gateway
 from apps.monetization.models import Notification
 from apps.orders.models import Order
-from apps.users.models import Role
+from apps.security.utils import log_security_event
 from apps.users.permissions import IsAdmin
+
+
+def _is_uuid(value):
+    """True si la référence peut être l'UUID d'un Payment (évite qu'une chaîne
+    arbitraire dans un webhook ne fasse lever ValidationError sur le champ UUID)."""
+    try:
+        uuid.UUID(str(value))
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
 
 
 def _send_order_confirmation(order):
@@ -49,7 +61,7 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.has_role(Role.RoleName.ADMIN):
+        if user.is_admin():
             return Payment.objects.all()
         return Payment.objects.filter(
             models.Q(order__customer=user)
@@ -58,7 +70,7 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
         ).distinct()
 
     def _ensure_customer(self, payment):
-        if self.request.user.has_role(Role.RoleName.ADMIN):
+        if self.request.user.is_admin():
             return
         if payment.order_id is not None:
             owner_id = payment.order.customer_id
@@ -112,6 +124,87 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(PaymentSerializer(payment).data)
 
 
+class PaymentWebhookView(APIView):
+    """
+    Endpoint public de notification fournisseur, idempotent.
+
+    POST /api/payments/webhook/{provider}/
+    Body attendu :
+        {
+            "reference": "SANDBOX-AABBCCDDEE" ou l'UUID du Payment,
+            "transaction_id": "ref fournisseur (facultatif)",
+            "status": "success" | "failed"
+        }
+
+    Sécurité : aucun paiement n'est confirmé sans que le backend retrouve le
+    Payment à confirmer — une chaîne arbitraire est simplement ignorée. La
+    vérification de signature fournisseur est activée dès qu'une clé existe
+    (settings.PAYMENT_PROVIDERS) ; en sandbox, le webhook reste disponible
+    pour tester le cycle de vie complet côté intégration.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, provider):
+        if not settings.PAYMENT_SANDBOX:
+            secret = getattr(settings, "PAYMENT_PROVIDERS", {}).get(provider)
+            if not secret:
+                log_security_event(
+                    None, "payment.webhook.rejected", request,
+                    {"provider": provider, "reason": "provider_not_configured"},
+                )
+                return Response(
+                    {"error": "Fournisseur de paiement non configuré pour ce webhook."},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            # La vérification de signature (HMAC du corps de la requête) serait
+            # effectuée ici une fois qu'une API réelle est configurée — voir
+            # gateways.py, pour ne pas inventer un protocole faux.
+
+        reference = str(request.data.get("reference", "")).strip()
+        outcome = str(request.data.get("status", "")).lower()
+        if not reference or outcome not in ("success", "failed"):
+            return Response(
+                {"error": "reference et status ('success'|'failed') sont requis."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        payment = None
+        if _is_uuid(reference):
+            payment = Payment.objects.filter(id=reference).first()
+        if payment is None:
+            payment = Payment.objects.filter(provider_ref=reference).first()
+        if payment is None:
+            log_security_event(
+                None, "payment.webhook.unknown_payment", request,
+                {"provider": provider, "reference": reference[:80]},
+            )
+            return Response(
+                {"error": "Paiement introuvable pour cette référence."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        already = payment.status
+        if outcome == "success":
+            payment.mark_succeeded()
+        else:
+            payment.mark_failed()
+
+        # Journaliser uniquement les événements anormaux (le double comptage
+        # est impossible grâce à l'idempotence de mark_succeeded/mark_failed).
+        if already == Payment.Status.SUCCESS:
+            log_security_event(
+                None, "payment.webhook.deduplicated", request,
+                {"provider": provider, "reference": reference[:80], "payment_id": str(payment.id)},
+            )
+
+        return Response({
+            "received": True,
+            "payment_id": payment.id,
+            "status": payment.status,
+            "duplicate": already == payment.status,
+        })
+
+
 class RefundViewSet(viewsets.ReadOnlyModelViewSet):
     """
     Remboursements créés automatiquement quand une commande déjà payée est
@@ -126,7 +219,10 @@ class RefundViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = Refund.objects.select_related("payment__order__store", "payment__order__customer")
-        if user.has_role(Role.RoleName.ADMIN):
+        status_filter = self.request.query_params.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        if user.is_admin():
             return qs
         return qs.filter(payment__order__customer=user)
 

@@ -1,6 +1,5 @@
-import { Fragment } from "react";
 import { Link } from "react-router-dom";
-import { ChevronRight, Home } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface BreadcrumbItem {
@@ -8,25 +7,27 @@ export interface BreadcrumbItem {
   to?: string;
 }
 
-export function Breadcrumbs({ items, className }: { items: BreadcrumbItem[]; className?: string }) {
+interface BreadcrumbsProps {
+  items: BreadcrumbItem[];
+  className?: string;
+}
+
+export function Breadcrumbs({ items, className }: BreadcrumbsProps) {
   return (
-    <nav aria-label="Fil d'Ariane" className={cn("flex items-center gap-1.5 text-xs font-medium text-muted-foreground", className)}>
-      <Link to="/home" className="flex items-center transition-colors hover:text-orange">
-        <Home className="h-3.5 w-3.5" />
-      </Link>
+    <nav aria-label="Fil d'Ariane" className={cn("flex items-center gap-1 text-sm text-muted-foreground", className)}>
       {items.map((item, i) => {
         const isLast = i === items.length - 1;
         return (
-          <Fragment key={item.label}>
-            <ChevronRight className="h-3 w-3 shrink-0" />
+          <span key={i} className="flex items-center gap-1">
+            {i > 0 && <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
             {item.to && !isLast ? (
-              <Link to={item.to} className="truncate transition-colors hover:text-orange">
+              <Link to={item.to} className="hover:text-orange-600 transition-colors">
                 {item.label}
               </Link>
             ) : (
-              <span className={cn("truncate", isLast && "font-semibold text-gray-700")}>{item.label}</span>
+              <span className={cn(isLast ? "font-medium text-ink" : "")}>{item.label}</span>
             )}
-          </Fragment>
+          </span>
         );
       })}
     </nav>

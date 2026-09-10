@@ -22,6 +22,24 @@ CSRF_TRUSTED_ORIGINS = [
 # force DEBUG=False pendant `manage.py test`.
 AUTH_ANON_THROTTLE_RATE = None
 
+# Aucun fournisseur SMS n'étant branché, on révèle le code OTP téléphone
+# dans la réponse de l'endpoint d'envoi pour le développement. Les settings
+# de test l'activent via override_settings ciblé (base.py le garde à False).
+PHONE_OTP_REVEAL_CODE = True
+
+# Hachage de mot de passe rapide pour le développement et la suite de tests :
+# PBKDF2 à 6 000 000 itérations (défaut Django) prend >1 s par hash sur ce
+# poste et fait exploser la durée des tests. Jamais utilisé en production
+# (prod.py n'hérite pas de ce réglage) — le format reste du PBKDF2 compatible.
+from django.contrib.auth.hashers import PBKDF2PasswordHasher  # noqa: E402
+
+
+class _FastPBKDF2PasswordHasher(PBKDF2PasswordHasher):
+    iterations = 10_000
+
+
+PASSWORD_HASHERS = ["config.settings.dev._FastPBKDF2PasswordHasher"]
+
 # Retirer debug toolbar pour éviter les erreurs temporaires
 # INSTALLED_APPS += ["debug_toolbar"]  # noqa: F405
 # MIDDLEWARE += ["debug_toolbar.middleware.DebugToolbarMiddleware"]  # noqa: F405

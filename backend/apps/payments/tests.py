@@ -8,7 +8,7 @@ from rest_framework.test import APIClient
 from apps.users.models import User, Role, UserRole
 from apps.catalog.models import Store
 from apps.orders.models import Order
-from apps.payments.models import Payment
+from apps.payments.models import Payment, Refund
 
 
 @override_settings(PAYMENT_SANDBOX=True)
@@ -78,3 +78,53 @@ class PaymentSandboxTests(TestCase):
         self.client.force_authenticate(self.customer)
         response = self.client.post(f"/api/payments/{self.payment.id}/sandbox-confirm/", {"outcome": "success"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class RefundStatusFilterTests(TestCase):
+    """Le filtre ?status= de la liste admin des remboursements (admin-refunds)."""
+
+    def setUp(self):
+        self.client = APIClient()
+        Role.objects.get_or_create(name=Role.RoleName.ADMIN)
+        Role.objects.get_or_create(name=Role.RoleName.CLIENT)
+        Role.objects.get_or_create(name=Role.RoleName.MERCHANT)
+
+        admin = User.objects.create_user(username="admin@example.com", email="admin@example.com", password="p", is_verified=True)
+        UserRole.objects.create(user=admin, role=Role.objects.get(name=Role.RoleName.ADMIN))
+        self.admin = admin
+
+        customer = User.objects.create_user(username="client@example.com", email="client@example.com", password="p", is_verified=True)
+        UserRole.objects.create(user=customer, role=Role.objects.get(name=Role.RoleName.CLIENT))
+
+        merchant = User.objects.create_user(username="merchant@example.com", email="merchant@example.com", password="p", is_verified=True)
+        UserRole.objects.create(user=merchant, role=Role.objects.get(name=Role.RoleName.MERCHANT))
+
+        store = Store.objects.create(owner=merchant, name="Boutique")
+        order = Order.objects.create(customer=customer, store=store, total_amount=10000)
+        payment = Payment.objects.create(order=order, amount=10000, method="wave")
+
+        self.pending_refund = Refund.objects.create(payment=payment, amount=6000, reason="Annulation")
+        self.completed_refund = Refund.objects.create(
+            payment=payment, amount=4000, reason="Satisfait", status=Refund.Status.COMPLETED
+        )
+
+    def test_admin_filters_refunds_by_status(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.get("/api/payments/refunds/?status=pending")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], self.pending_refund.id)
+
+    def test_admin_sees_all_refunds_without_filter(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.get("/api/payments/refunds/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 2)
+
+    def test_customer_status_filter_only_scopes_own_refunds(self):
+        customer = self.pending_refund.payment.order.customer
+        self.client.force_authenticate(customer)
+        response = self.client.get("/api/payments/refunds/?status=completed")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], self.completed_refund.id)

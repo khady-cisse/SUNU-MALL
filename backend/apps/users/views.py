@@ -48,7 +48,7 @@ class UserViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.has_role("admin"):
+        if user.is_admin():
             queryset = User.objects.all().order_by("-created_at")
             role = self.request.query_params.get("role")
             if role:

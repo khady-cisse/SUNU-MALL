@@ -1,0 +1,1 @@
+"""Centre de contrôle technique : administration de la plateforme (spec §44-§78)."""
