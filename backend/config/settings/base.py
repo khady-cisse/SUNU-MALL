@@ -321,9 +321,32 @@ DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="noreply@sunumall.com"
 # recette avec de vraies clés marchandes. Le défaut est False : un déploiement
 # oublieux ne doit jamais tourner silencieusement en paiements simulés.
 PAYMENT_SANDBOX = config("PAYMENT_SANDBOX", default=False, cast=bool)
+
+# Wave — API Business (Checkout) : clé marchande du dev portal
+# (business.wave.com/dev-portal). WAVE_API_BASE_URL permet de pointer une
+# éventuelle passerelle de test ; par défaut l'API publique Wave.
 WAVE_API_KEY = config("WAVE_API_KEY", default="")
-ORANGE_MONEY_API_KEY = config("ORANGE_MONEY_API_KEY", default="")
+WAVE_API_BASE_URL = config("WAVE_API_BASE_URL", default="https://api.wave.com")
+
+# Orange Money — API Web Payment : le jeton d'accès est obtenu par OAuth2
+# (client_id/client_secret), puis chaque paiement est signé par la
+# merchant_key reçue à l'onboarding. ORANGE_MONEY_COUNTRY_PATH est le segment
+# pays de l'endpoint de production ("sn" au Sénégal) ; le sandbox, lui,
+# passe toujours par "/dev/". ORANGE_MONEY_CURRENCY reste sur XOF (OUV dans
+# certains environnements de test).
+ORANGE_MONEY_CLIENT_ID = config("ORANGE_MONEY_CLIENT_ID", default=config("ORANGE_MONEY_API_KEY", default=""))
+ORANGE_MONEY_CLIENT_SECRET = config("ORANGE_MONEY_CLIENT_SECRET", default="")
+ORANGE_MONEY_MERCHANT_KEY = config("ORANGE_MONEY_MERCHANT_KEY", default="")
+ORANGE_MONEY_API_BASE_URL = config("ORANGE_MONEY_API_BASE_URL", default="https://api.orange.com")
+ORANGE_MONEY_COUNTRY_PATH = config("ORANGE_MONEY_COUNTRY_PATH", default="sn")
+ORANGE_MONEY_CURRENCY = config("ORANGE_MONEY_CURRENCY", default="XOF")
+
+# URL du frontend utilisée pour construire les liens dans les emails et les
+# URL de retour des passerelles (success_url/error_url). BACKEND_URL est
+# l'URL publique de l'API : c'est elle que Wave/Orange Money notifient
+# (notif_url), pas le frontend. Doivent être accessibles publiquement.
 FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3004")
+BACKEND_URL = config("BACKEND_URL", default="http://localhost:8080/api")
 
 # --- IA (apps/ia/) : génération de description produit, assistant client ---
 # Tant qu'aucune clé n'est fournie, les endpoints IA répondent une erreur

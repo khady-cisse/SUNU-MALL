@@ -24,6 +24,11 @@ gunicorn>=22.0,<22.1
 # JWT Authentication
 djangorestframework-simplejwt>=5.3,<5.4
 
+# Client HTTP des passerelles de paiement (Wave, Orange Money) et autres
+# appels aux API tierces du projet. requis>=2.31,<3 garde l'API stable de
+# la branche 2.x qui reste compatible avec l'écosystème Django actuel.
+requests>=2.31,<3
+
 # Client API Anthropic (Claude) — juste un client HTTP, pas une lib ML
 # lourde (torch, transformers...), donc reste ici plutôt que dans ia.txt.
 # Utilisé en synchrone dans les vues (apps/ia/) comme les autres appels

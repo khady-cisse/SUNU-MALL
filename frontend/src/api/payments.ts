@@ -21,6 +21,9 @@ export function processRefund(refundId: number) {
 export interface InitiatePaymentResult {
   sandbox: boolean;
   provider_ref: string;
+  /** URL de paiement hébergée (Wave wave_launch_url, Orange payment_url) — absente en sandbox. */
+  checkout_url?: string;
+  method?: string;
   message: string;
 }
 

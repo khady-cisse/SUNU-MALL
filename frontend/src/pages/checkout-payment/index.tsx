@@ -3,6 +3,7 @@ import { Navigate, useNavigate } from "react-router-dom";
 import { CheckCircle2, FlaskConical, TriangleAlert, XCircle } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { Spinner } from "@/components/ui/Spinner";
 import * as ordersApi from "@/api/orders";
 import * as paymentsApi from "@/api/payments";
 import { useCheckoutStore } from "@/store/checkoutStore";
@@ -22,14 +23,34 @@ export default function CheckoutPaymentPage() {
   const [error, setError] = useState<string | null>(null);
   const [createdOrder, setCreatedOrder] = useState<Order | GlobalOrder | null>(null);
   const [sandboxMessage, setSandboxMessage] = useState<string | null>(null);
+  const [redirectingTo, setRedirectingTo] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<"success" | "failed" | null>(null);
   const [paymentFailed, setPaymentFailed] = useState(false);
   const [cardDetails, setCardDetails] = useState<CardDetails>({ holder: "", number: "", expiry: "", cvc: "" });
 
   useEffect(() => {
-    if (createdOrder?.payment) {
-      paymentsApi.initiatePayment(createdOrder.payment.id).then((res) => setSandboxMessage(res.message));
-    }
+    if (!createdOrder?.payment) return;
+    let cancelled = false;
+    paymentsApi
+      .initiatePayment(createdOrder.payment.id)
+      .then((res) => {
+        if (cancelled) return;
+        // Passerelle réelle qui affiche sa propre page de paiement : on
+        // délègue au navigateur (redirection vers Wave / Orange Money).
+        if (res.checkout_url) {
+          setRedirectingTo(res.checkout_url);
+          window.location.assign(res.checkout_url);
+        } else {
+          setSandboxMessage(res.message ?? "Mode test : aucune vraie transaction n'est envoyée.");
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(apiErrorMessage(err, "Impossible d'initier le paiement."));
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [createdOrder]);
 
   // Une fois la commande créée, ces gardes ne doivent plus s'appliquer :
@@ -88,6 +109,28 @@ export default function CheckoutPaymentPage() {
   }
 
   if (createdOrder) {
+    if (redirectingTo) {
+      return (
+        <div className="flex flex-col gap-6">
+          <h1 className="font-display text-2xl font-bold text-gray-900">Paiement</h1>
+          <Card className="flex flex-col items-center gap-4 py-8 text-center">
+            <Spinner label="Redirection vers la page de paiement sécurisée…" />
+            <p className="text-sm text-muted-foreground">
+              Votre commande n°{createdOrder.id.slice(0, 8)} ({formatPrice(createdOrder.total_amount)}) sera
+              confirmée dès que le paiement sera validé.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Si la redirection ne se fait pas automatiquement,{" "}
+              <a href={redirectingTo} className="underline text-orange" rel="noreferrer">
+                cliquez ici
+              </a>
+              .
+            </p>
+          </Card>
+        </div>
+      );
+    }
+
     return (
       <div className="flex flex-col gap-6">
         <h1 className="font-display text-2xl font-bold text-gray-900">Paiement</h1>
