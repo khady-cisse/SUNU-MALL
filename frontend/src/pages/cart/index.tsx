@@ -13,7 +13,7 @@ import { useCheckoutStore } from "@/store/checkoutStore";
 import { useAuthStore } from "@/store/authStore";
 import { useCartStore } from "@/store/cartStore";
 import { formatPrice } from "@/lib/utils";
-import type { CartItem as ApiCartItem, Store } from "@/types";
+import type { Store } from "@/types";
 
 export default function CartPage() {
   const navigate = useNavigate();
