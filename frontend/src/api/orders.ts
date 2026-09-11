@@ -1,6 +1,6 @@
 import { API_BASE_URL, apiGet, apiPatch, apiPost } from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
-import type { Address, CheckoutPayload, Delivery, DeliveryEvent, DeliveryStatus, Driver, DriverAvailability, Order, Paginated } from "@/types";
+import type { Address, CheckoutPayload, Delivery, DeliveryEvent, DeliveryQuote, DeliveryStatus, Driver, DriverAvailability, GlobalOrder, Order, Paginated } from "@/types";
 
 export async function listAddresses() {
   const data = await apiGet<Paginated<Address>>("/orders/addresses/");
@@ -33,12 +33,39 @@ export function getOrder(id: string) {
   return apiGet<Order>(`/orders/${id}/`);
 }
 
+/** Commandes globales multi-boutiques du client courant. */
+export async function listGlobalOrders() {
+  const data = await apiGet<Paginated<GlobalOrder>>("/orders/global-orders/");
+  return data.results;
+}
+
+export function getGlobalOrder(id: string) {
+  return apiGet<GlobalOrder>(`/orders/global-orders/${id}/`);
+}
+
+export function cancelGlobalOrder(id: string) {
+  return apiPost<GlobalOrder>(`/orders/global-orders/${id}/cancel/`);
+}
+
+/** Crée la commande. Sans `store` dans le payload (multi-boutiques), le
+ * backend déduit les boutiques des articles et renvoie une `GlobalOrder`. */
 export function checkout(payload: CheckoutPayload) {
-  return apiPost<Order>("/orders/checkout/", payload);
+  return apiPost<Order | GlobalOrder>("/orders/checkout/", payload);
 }
 
 export function cancelOrder(id: string) {
   return apiPost<Order>(`/orders/${id}/cancel/`);
+}
+
+/** Tarif de livraison côté serveur AVANT paiement, pour un panier
+ * multi-boutiques (frais de collecte + distance réellement calculés et
+ * affichés ; jamais calculés dans le navigateur). */
+export async function deliveryCalculate(payload: {
+  items: { product_variant: string; quantity: number }[];
+  address: string;
+  delivery_type: "pickup" | "standard" | "express";
+}) {
+  return apiPost<DeliveryQuote>("/orders/delivery-calculate/", payload);
 }
 
 export async function getDeliveryQuote(payload: {

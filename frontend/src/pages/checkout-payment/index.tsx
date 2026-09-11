@@ -8,7 +8,7 @@ import * as paymentsApi from "@/api/payments";
 import { useCheckoutStore } from "@/store/checkoutStore";
 import { formatPrice } from "@/lib/utils";
 import { apiErrorMessage, ApiError } from "@/lib/api";
-import type { Order } from "@/types";
+import type { CheckoutPayload, GlobalOrder, Order } from "@/types";
 import { PAYMENT_METHODS } from "@/lib/paymentMethods";
 import { CardPaymentForm } from "@/components/checkout/CardPaymentForm";
 import { isCardComplete, type CardDetails } from "@/components/checkout/cardValidation";
@@ -20,7 +20,7 @@ export default function CheckoutPaymentPage() {
   const { storeId, address, items, deliveryMethod, deliveryFee, paymentMethod, setPaymentMethod, reset } = useCheckoutStore();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
+  const [createdOrder, setCreatedOrder] = useState<Order | GlobalOrder | null>(null);
   const [sandboxMessage, setSandboxMessage] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<"success" | "failed" | null>(null);
   const [paymentFailed, setPaymentFailed] = useState(false);
@@ -38,7 +38,7 @@ export default function CheckoutPaymentPage() {
   // le composant se re-rendait entre-temps sur cette page et redirigeait
   // vers /cart avant même que la navigation explicite n'ait eu lieu.
   if (!createdOrder) {
-    if (!storeId) return <Navigate to="/cart" replace />;
+    if (items.length === 0) return <Navigate to="/cart" replace />;
     if (!address) return <Navigate to="/checkout-address" replace />;
   }
 
@@ -49,13 +49,17 @@ export default function CheckoutPaymentPage() {
     setSubmitting(true);
     setError(null);
     try {
-      const order = await ordersApi.checkout({
-        store: storeId!,
+      const payload: CheckoutPayload = {
         address: address!.id,
         delivery_type: deliveryMethod,
         payment_method: paymentMethod,
         items: items.map((i) => ({ product_variant: i.product_variant, quantity: i.quantity })),
-      });
+      };
+      // Boutique unique : le store est transmis (commande classique).
+      // Panier multi-boutiques : store absent → backend déduit les boutiques
+      // des articles et renvoie une GlobalOrder.
+      if (storeId) payload.store = storeId;
+      const order = await ordersApi.checkout(payload);
       setCreatedOrder(order);
     } catch (err) {
       setError(
@@ -72,8 +76,9 @@ export default function CheckoutPaymentPage() {
     try {
       await paymentsApi.sandboxConfirmPayment(createdOrder.payment.id, outcome);
       if (outcome === "success") {
+        const isGlobal = "number_of_stores" in createdOrder;
         reset();
-        navigate(`/order-confirmed?order=${createdOrder.id}`);
+        navigate(isGlobal ? `/order-confirmed?gorder=${createdOrder.id}` : `/order-confirmed?order=${createdOrder.id}`);
       } else {
         setPaymentFailed(true);
       }

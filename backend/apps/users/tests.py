@@ -251,3 +251,31 @@ class CreateAdminCommandTests(TestCase):
         user = User.objects.get(email='admin@sunumall.com')
         self.assertTrue(user.has_role(Role.RoleName.ADMIN))
         self.assertTrue(user.has_role(Role.RoleName.SUPER_ADMIN))
+
+    def test_specialized_role_grants_only_that_admin_role(self):
+        self.call_command(
+            'create_admin', email='admin.kyc@sunumall.com',
+            password='Admin@12345', roles=['admin_kyc'],
+        )
+        user = User.objects.get(email='admin.kyc@sunumall.com')
+        self.assertTrue(user.has_role(Role.RoleName.ADMIN_KYC))
+        self.assertFalse(user.has_role(Role.RoleName.ADMIN))
+        self.assertFalse(user.has_role(Role.RoleName.SUPER_ADMIN))
+
+    def test_multiple_roles_and_super_admin_flag(self):
+        self.call_command(
+            'create_admin', email='admin.finance@sunumall.com',
+            password='Admin@12345', roles=['admin_finance', 'admin_support'],
+            super_admin=True,
+        )
+        user = User.objects.get(email='admin.finance@sunumall.com')
+        self.assertTrue(user.has_role(Role.RoleName.ADMIN_FINANCE))
+        self.assertTrue(user.has_role(Role.RoleName.ADMIN_SUPPORT))
+        self.assertTrue(user.has_role(Role.RoleName.SUPER_ADMIN))
+        self.assertFalse(user.has_role(Role.RoleName.ADMIN))
+
+    def test_role_all_grants_every_admin_role(self):
+        self.call_command('create_admin', email='admin.all@sunumall.com', roles=['all'])
+        user = User.objects.get(email='admin.all@sunumall.com')
+        for role in Role.ADMIN_ROLES:
+            self.assertTrue(user.has_role(role), f"rôle {role} manquant")

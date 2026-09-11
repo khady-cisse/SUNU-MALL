@@ -23,7 +23,7 @@ type FormValues = z.infer<typeof schema>;
 
 export default function CheckoutAddressPage() {
   const navigate = useNavigate();
-  const storeId = useCheckoutStore((s) => s.storeId);
+  const items = useCheckoutStore((s) => s.items);
   const setAddress = useCheckoutStore((s) => s.setAddress);
   const { data: addresses, loading, error: loadError, refetch: refetchAddresses } = useAsync(() => ordersApi.listAddresses(), []);
   const [showForm, setShowForm] = useState(false);
@@ -38,7 +38,7 @@ export default function CheckoutAddressPage() {
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { country: "Sénégal" } });
 
-  if (!storeId) return <Navigate to="/cart" replace />;
+  if (items.length === 0) return <Navigate to="/cart" replace />;
 
   function captureLocation() {
     if (!navigator.geolocation) {

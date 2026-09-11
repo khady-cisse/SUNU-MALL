@@ -1,7 +1,8 @@
 from rest_framework import serializers
 from .models import (
-    Address, Delivery, DeliveryEvent, DeliveryPartner, DeliveryTracking,
-    DeliveryZone, Driver, Order, OrderItem, PartnerInvoice, PartnerZonePricing,
+    Address, Delivery, DeliveryEvent, DeliveryPartner, DeliveryPickup,
+    DeliveryPricingRule, DeliveryTracking, DeliveryZone, Driver, GlobalOrder,
+    Order, OrderItem, PartnerInvoice, PartnerZonePricing,
 )
 
 
@@ -86,21 +87,30 @@ class DeliverySerializer(serializers.ModelSerializer):
     last_position = serializers.SerializerMethodField()
     eta_seconds = serializers.SerializerMethodField()
     timeline = serializers.SerializerMethodField()
+    pickups = serializers.SerializerMethodField()
+    pickups_collected = serializers.SerializerMethodField()
+    pickups_total = serializers.SerializerMethodField()
 
     class Meta:
         model = Delivery
         fields = [
-            "id", "reference", "order", "driver", "driver_detail", "status",
+            "id", "reference", "order", "global_order", "driver", "driver_detail", "status",
             "partner", "partner_detail", "picked_up_at", "delivered_at",
             "last_position", "eta_seconds", "timeline",
+            "total_delivery_fee", "partner_cost", "platform_margin",
+            "total_distance", "total_weight", "total_volume",
+            "pickups", "pickups_collected", "pickups_total",
             "proof_method", "proof_note", "proof_photo", "proof_latitude",
             "proof_longitude", "proof_recorded_at",
             "failure_reason", "failure_comment", "return_reason", "refuse_reason",
             "created_at", "updated_at",
         ]
         read_only_fields = [
-            "id", "reference", "order", "created_at", "updated_at",
+            "id", "reference", "order", "global_order", "created_at", "updated_at",
             "last_position", "eta_seconds", "timeline",
+            "total_delivery_fee", "partner_cost", "platform_margin",
+            "total_distance", "total_weight", "total_volume",
+            "pickups", "pickups_collected", "pickups_total",
         ]
 
     def get_last_position(self, obj):
@@ -131,6 +141,29 @@ class DeliverySerializer(serializers.ModelSerializer):
             "comment", "created_at",
         )
         return list(events)
+
+    def get_pickups(self, obj):
+        return DeliveryPickupSerializer(obj.pickups.all(), many=True).data
+
+    def get_pickups_collected(self, obj):
+        return obj.pickups.filter(pickup_status=DeliveryPickup.Status.PICKED_UP).count()
+
+    def get_pickups_total(self, obj):
+        return obj.pickups.count()
+
+
+class DeliveryPickupSerializer(serializers.ModelSerializer):
+    store_name = serializers.CharField(source="store.name", read_only=True)
+
+    class Meta:
+        model = DeliveryPickup
+        fields = [
+            "id", "delivery", "store", "store_name", "seller",
+            "address", "city", "latitude", "longitude",
+            "package_count", "package_weight", "package_volume",
+            "pickup_status", "pickup_order", "picked_up_at", "notes",
+        ]
+        read_only_fields = fields
 
 
 class DeliveryPartnerSerializer(serializers.ModelSerializer):
@@ -230,6 +263,10 @@ class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
     delivery = DeliverySerializer(read_only=True)
     store_name = serializers.CharField(source="store.name", read_only=True)
+    store_address = serializers.CharField(source="store.address", read_only=True)
+    store_city = serializers.CharField(source="store.city", read_only=True)
+    store_latitude = serializers.DecimalField(source="store.latitude", max_digits=9, decimal_places=6, read_only=True, allow_null=True)
+    store_longitude = serializers.DecimalField(source="store.longitude", max_digits=9, decimal_places=6, read_only=True, allow_null=True)
     address_detail = AddressSerializer(source="address", read_only=True)
     payment = serializers.SerializerMethodField()
     customer_email = serializers.EmailField(source="customer.email", read_only=True)
@@ -239,13 +276,19 @@ class OrderSerializer(serializers.ModelSerializer):
     class Meta:
         model = Order
         fields = [
-            "id", "customer", "customer_name", "customer_email", "store", "store_name", "address", "address_detail",
-            "total_amount", "delivery_fee", "status", "can_be_cancelled", "items", "delivery", "payment",
+            "id", "customer", "customer_name", "customer_email", "store", "store_name",
+            "global_order",
+            "store_address", "store_city", "store_latitude", "store_longitude",
+            "address", "address_detail",
+            "total_amount", "delivery_fee", "delivery_type", "status", "can_be_cancelled", "items", "delivery", "payment",
             "created_at", "updated_at",
         ]
         read_only_fields = [
-            "id", "customer", "customer_name", "customer_email", "store_name", "address_detail",
-            "total_amount", "status", "can_be_cancelled", "items", "delivery", "payment", "created_at", "updated_at",
+            "id", "customer", "customer_name", "customer_email", "store_name",
+            "global_order",
+            "store_address", "store_city", "store_latitude", "store_longitude",
+            "address_detail",
+            "total_amount", "delivery_type", "status", "can_be_cancelled", "items", "delivery", "payment", "created_at", "updated_at",
         ]
 
     def get_customer_name(self, obj):
@@ -267,6 +310,68 @@ class OrderSerializer(serializers.ModelSerializer):
         return {"id": payment.id, "method": payment.method, "status": payment.status, "refund": refund_data}
 
 
+class GlobalOrderSerializer(serializers.ModelSerializer):
+    orders = OrderSerializer(many=True, read_only=True)
+    delivery = DeliverySerializer(read_only=True)
+    sub_statuses = serializers.SerializerMethodField()
+    payment = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GlobalOrder
+        fields = [
+            "id", "reference", "customer", "address", "delivery_type",
+            "items_total", "delivery_fee", "total_amount", "status",
+            "number_of_stores", "number_of_pickups",
+            "orders", "delivery", "payment", "sub_statuses",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_sub_statuses(self, obj):
+        return {
+            str(o.store_id): {
+                "store_name": o.store.name,
+                "amount": str(o.total_amount),
+                "status": o.status,
+            }
+            for o in obj.orders.select_related("store")
+        }
+
+    def get_payment(self, obj):
+        payment = obj.payments.first()
+        if not payment:
+            return None
+        return {
+            "id": payment.id,
+            "method": payment.method,
+            "status": payment.status,
+            "amount": str(payment.amount),
+        }
+
+
+class DeliveryPricingRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DeliveryPricingRule
+        fields = [
+            "id", "name", "is_active",
+            "base_fee", "extra_pickup_fee", "per_km_fee",
+            "weight_per_kg_fee", "volume_per_m3_fee", "package_fee",
+            "express_surcharge", "min_fee", "max_fee",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "updated_at"]
+
+    def update(self, instance, validated_data):
+        if validated_data.get("is_active"):
+            DeliveryPricingRule.objects.filter(is_active=True).exclude(pk=instance.pk).update(is_active=False)
+        return super().update(instance, validated_data)
+
+    def create(self, validated_data):
+        if validated_data.get("is_active"):
+            DeliveryPricingRule.objects.filter(is_active=True).update(is_active=False)
+        return super().create(validated_data)
+
+
 class CheckoutItemInputSerializer(serializers.Serializer):
     """Un article du panier envoyé lors du passage de commande."""
     product_variant = serializers.UUIDField()
@@ -282,8 +387,12 @@ class CheckoutSerializer(serializers.Serializer):
     Le frais de livraison n'est jamais pris depuis le client : seul
     `delivery_type` est transmis, le montant est recalculé côté serveur
     (voir `apps.orders.pricing.compute_delivery_fee`).
+
+    `store` est optionnel : s'il est fourni, le chemin classique (une
+    boutique) est emprunté ; sinon les boutiques sont déduites des articles
+    et le chemin multi-boutiques (commande globale) est utilisé.
     """
-    store = serializers.UUIDField()
+    store = serializers.UUIDField(required=False, allow_null=True)
     address = serializers.UUIDField()
     delivery_type = serializers.ChoiceField(choices=["pickup", "standard", "express"], default="standard")
     payment_method = serializers.ChoiceField(choices=["wave", "orange_money", "card"])
@@ -295,3 +404,15 @@ class DeliveryQuoteSerializer(serializers.Serializer):
     store = serializers.UUIDField()
     address = serializers.UUIDField()
     delivery_type = serializers.ChoiceField(choices=["pickup", "standard", "express"], default="standard")
+
+
+class DeliveryCalculateSerializer(serializers.Serializer):
+    """Payload pour calculer le tarif d'une commande multi-boutiques.
+
+    (spec §8) — les boutiques sont déduites des articles du panier, jamais
+    fournies par le client. Le tarif renvoyé est garant de la source de
+    vérité serveur : le checkout recalcule toujours ce même montant.
+    """
+    address = serializers.UUIDField()
+    delivery_type = serializers.ChoiceField(choices=["pickup", "standard", "express"], default="standard")
+    items = CheckoutItemInputSerializer(many=True)

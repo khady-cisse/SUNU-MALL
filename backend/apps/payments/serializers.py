@@ -7,7 +7,7 @@ class PaymentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Payment
-        fields = ["id", "order", "subscription", "method", "amount", "status", "provider_ref", "refund", "created_at"]
+        fields = ["id", "order", "global_order", "subscription", "method", "amount", "status", "provider_ref", "refund", "created_at"]
         read_only_fields = ["id", "created_at"]
 
     def get_refund(self, obj):

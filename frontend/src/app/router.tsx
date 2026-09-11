@@ -90,7 +90,7 @@ import AdminFinancePage from "@/pages/admin-finance";
 import AdminComplaintsPage from "@/pages/admin-complaints";
 import AdminComplaintDetailPage from "@/pages/admin-complaint-detail";
 import AdminSupportPage from "@/pages/admin-support";
-import AdminNotificationsPage from "@/pages/notifications";
+import AdminNotificationsPage from "@/pages/admin-notifications";
 import AdminSearchPage from "@/pages/admin-search";
 import AdminSecurityPage from "@/pages/admin-security";
 import AdminAnalyticsPage from "@/pages/admin-analytics";

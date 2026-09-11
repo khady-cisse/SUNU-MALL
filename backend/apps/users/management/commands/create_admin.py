@@ -5,9 +5,18 @@ Usage :
     python manage.py create_admin
     python manage.py create_admin --email boss@sunumall.com --password "MdpFort@2026"
     python manage.py create_admin --super-admin
+    python manage.py create_admin --email admin.kyc@sunumall.com --role admin_kyc
+    python manage.py create_admin --role admin_finance --role admin_support
+    python manage.py create_admin --role all
 
 Idempotent : si l'email existe déjà, le compte est réactivé, marqué vérifié
-et recevra le rôle d'administration demandé (les autres rôles sont conservés).
+et recevra les rôles d'administration demandés (les autres rôles sont
+conservés).
+
+Rôles acceptés (--role, répétable) : super_admin, admin_kyc, admin_support,
+admin_finance, admin_marketplace, admin_delivery ou "all" (tous les rôles
+d'administration). Sans --role, le rôle maître "admin" est accordé par défaut
+(rétrocompatible).
 
 Par défaut :
     email    admin@sunumall.com
@@ -15,7 +24,7 @@ Par défaut :
     password Admin@12345   (à changer après la première connexion)
 """
 from django.contrib.auth import get_user_model
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 from apps.users.models import Role, UserRole
 
@@ -24,7 +33,7 @@ DEFAULT_PASSWORD = "Admin@12345"
 
 
 class Command(BaseCommand):
-    help = "Crée ou met à jour le compte administrateur principal de Sunu Mall."
+    help = "Crée ou met à jour un compte administrateur de Sunu Mall."
 
     def add_arguments(self, parser):
         parser.add_argument("--email", default=DEFAULT_EMAIL, help="Adresse email du compte admin.")
@@ -37,6 +46,17 @@ class Command(BaseCommand):
             "--last-name", default="Administration", help="Nom du compte (défaut : « Administration »)."
         )
         parser.add_argument(
+            "--role",
+            action="append",
+            dest="roles",
+            default=None,
+            help=(
+                "Rôle d'administration à accorder (répétable). Options : "
+                + ", ".join(Role.ADMIN_ROLES)
+                + " ou 'all'. Défaut si absent : 'admin'."
+            ),
+        )
+        parser.add_argument(
             "--super-admin",
             action="store_true",
             help="Accorde aussi le rôle super_admin (accès complet au centre de contrôle).",
@@ -46,6 +66,27 @@ class Command(BaseCommand):
         User = get_user_model()
         email = options["email"].lower().strip()
         username = options["username"] or email
+
+        # Collection des rôles d'administration à garantir (validés).
+        if options["roles"]:
+            role_names = []
+            for value in options["roles"]:
+                value = value.strip().lower()
+                if value == "all":
+                    role_names.extend(Role.ADMIN_ROLES)
+                elif value in Role.ADMIN_ROLES:
+                    role_names.append(value)
+                else:
+                    raise CommandError(
+                        f"Rôle inconnu : {value}. Attendu parmi {', '.join(Role.ADMIN_ROLES)} ou 'all'."
+                    )
+            # Préserver l'ordre canonique et évincer les doublons.
+            role_names = list(dict.fromkeys(role_names))
+        else:
+            role_names = [Role.RoleName.ADMIN]
+
+        if options["super_admin"] and Role.RoleName.SUPER_ADMIN not in role_names:
+            role_names.append(Role.RoleName.SUPER_ADMIN)
 
         user, created = User.objects.get_or_create(
             email=email,
@@ -78,9 +119,6 @@ class Command(BaseCommand):
 
         user.save()
 
-        role_names = [Role.RoleName.ADMIN]
-        if options["super_admin"]:
-            role_names.append(Role.RoleName.SUPER_ADMIN)
         granted = []
         for role_name in role_names:
             role, _ = Role.objects.get_or_create(name=role_name)
@@ -94,6 +132,9 @@ class Command(BaseCommand):
         ))
         if granted:
             self.stdout.write(self.style.WARNING(f"Rôle(s) ajouté(s) : {', '.join(granted)}"))
+        self.stdout.write(
+            f"Rôles : {', '.join(role_names)}"
+        )
         self.stdout.write(
             f"Connexion : {email} / {options['password'] if options['password'] != DEFAULT_PASSWORD else DEFAULT_PASSWORD}"
         )

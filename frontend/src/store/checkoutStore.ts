@@ -2,6 +2,8 @@ import { create } from "zustand";
 import type { Address, CartItem } from "@/types";
 
 interface CheckoutState {
+  /** Boutique unique (commande classique) ou `null` pour un panier
+   * multi-boutiques (les boutiques sont déduites des articles côté serveur). */
   storeId: string | null;
   storeName: string | null;
   items: CartItem[];
@@ -9,7 +11,7 @@ interface CheckoutState {
   deliveryMethod: "standard" | "express" | "pickup";
   deliveryFee: number;
   paymentMethod: "wave" | "orange_money" | "card";
-  startCheckout: (storeId: string, storeName: string, items: CartItem[]) => void;
+  startCheckout: (storeId: string | null, storeName: string | null, items: CartItem[]) => void;
   setAddress: (address: Address) => void;
   setDelivery: (method: "standard" | "express" | "pickup", fee: number) => void;
   setPaymentMethod: (method: "wave" | "orange_money" | "card") => void;

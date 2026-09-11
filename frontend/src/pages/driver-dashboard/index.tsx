@@ -69,7 +69,13 @@ export default function DriverDashboardPage() {
                     <Card variant="interactive" className="flex items-center justify-between">
                       <div>
                         <p className="text-xs text-muted-foreground">{formatDate(delivery.created_at)}</p>
-                        <p className="font-semibold text-ink">Commande n°{delivery.order.slice(0, 8)}</p>
+                        <p className="font-semibold text-ink">
+                          {delivery.order
+                            ? `Commande n°${delivery.order.slice(0, 8)}`
+                            : delivery.global_order
+                              ? `Mission multi-boutiques n°${delivery.global_order.slice(0, 8)}`
+                              : "Mission"}
+                        </p>
                       </div>
                       <div className="flex items-center gap-3">
                         <Badge variant={DELIVERY_STATUS_VARIANT[delivery.status]}>{DELIVERY_STATUS_LABEL[delivery.status]}</Badge>
@@ -91,7 +97,13 @@ export default function DriverDashboardPage() {
                     <Card variant="interactive" className="flex items-center justify-between opacity-70">
                       <div>
                         <p className="text-xs text-muted-foreground">{formatDate(delivery.created_at)}</p>
-                        <p className="font-medium text-ink">Commande n°{delivery.order.slice(0, 8)}</p>
+                        <p className="font-medium text-ink">
+                          {delivery.order
+                            ? `Commande n°${delivery.order.slice(0, 8)}`
+                            : delivery.global_order
+                              ? `Mission multi-boutiques n°${delivery.global_order.slice(0, 8)}`
+                              : "Mission"}
+                        </p>
                       </div>
                       <div className="flex items-center gap-3">
                         <Badge variant={DELIVERY_STATUS_VARIANT[delivery.status]}>{DELIVERY_STATUS_LABEL[delivery.status]}</Badge>

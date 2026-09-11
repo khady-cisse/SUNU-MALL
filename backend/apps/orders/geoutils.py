@@ -18,6 +18,7 @@ DEFAULT_SPEED_KMH = 30
 
 def haversine_km(lat1, lng1, lat2, lng2):
     """Distance en kilomètres entre deux points (loi de Haversine)."""
+    lat1, lng1, lat2, lng2 = (float(v) for v in (lat1, lng1, lat2, lng2))
     p1, p2 = radians(lat1), radians(lat2)
     delta_lat = radians(lat2 - lat1)
     delta_lng = radians(lng2 - lng1)

@@ -6,6 +6,15 @@ describe("roleHomePath", () => {
     expect(roleHomePath(["client", "admin"])).toBe("/admin");
   });
 
+  it("sends any specialized admin role to /admin", () => {
+    expect(roleHomePath(["admin_kyc"])).toBe("/admin");
+    expect(roleHomePath(["admin_support"])).toBe("/admin");
+    expect(roleHomePath(["admin_finance"])).toBe("/admin");
+    expect(roleHomePath(["admin_marketplace"])).toBe("/admin");
+    expect(roleHomePath(["admin_delivery"])).toBe("/admin");
+    expect(roleHomePath(["super_admin"])).toBe("/admin");
+  });
+
   it("sends a merchant to /merchant", () => {
     expect(roleHomePath(["merchant"])).toBe("/merchant");
   });
@@ -31,6 +40,11 @@ describe("roleHomePath", () => {
 describe("roleNotificationsPath", () => {
   it("sends an admin to /admin-notifications regardless of other roles", () => {
     expect(roleNotificationsPath(["driver", "merchant", "admin"])).toBe("/admin-notifications");
+  });
+
+  it("sends a specialized admin to /admin-notifications", () => {
+    expect(roleNotificationsPath(["admin_finance"])).toBe("/admin-notifications");
+    expect(roleNotificationsPath(["admin_kyc"])).toBe("/admin-notifications");
   });
 
   it("sends a merchant to /merchant-notifications", () => {

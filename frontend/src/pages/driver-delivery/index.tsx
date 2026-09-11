@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   AlertTriangle, CheckCircle2, Copy, KeyRound, MapPin, Navigation,
-  PackageSearch, PackageX, RotateCcw, Satellite, ThumbsDown, ThumbsUp, Truck, XCircle,
+  PackageSearch, PackageX, RotateCcw, Satellite, Store, ThumbsDown, ThumbsUp, Truck, XCircle,
 } from "lucide-react";
 import { useAsync } from "@/hooks/useAsync";
 import * as ordersApi from "@/api/orders";
@@ -62,7 +62,7 @@ export default function DriverDeliveryPage() {
     [deliveryId],
   );
   const { data: order, loading: loadingOrder } = useAsync(
-    () => (delivery ? ordersApi.getOrder(delivery.order) : Promise.resolve(null)),
+    () => (delivery?.order ? ordersApi.getOrder(delivery.order) : Promise.resolve(null)),
     [delivery?.order],
   );
 
@@ -218,6 +218,14 @@ export default function DriverDeliveryPage() {
         label: "Votre position",
       }
     : null;
+  const pickup =
+    order?.store_latitude != null && order?.store_longitude != null
+      ? {
+          lat: parseFloat(order.store_latitude),
+          lng: parseFloat(order.store_longitude),
+          label: "Boutique — point de départ",
+        }
+      : null;
   const destination =
     order?.address_detail?.latitude != null && order?.address_detail?.longitude != null
       ? {
@@ -244,17 +252,29 @@ export default function DriverDeliveryPage() {
           <>
             <p className="font-semibold text-ink">{order.store_name}</p>
             <p className="text-sm text-muted-foreground">{formatDate(order.created_at)}</p>
-            <div className="flex items-center gap-2 text-sm text-ink">
-              <MapPin className="h-4 w-4 shrink-0 text-orange" />
-              {order.address_detail?.street}, {order.address_detail?.city}
+            <div className="flex flex-col gap-1 text-sm text-ink">
+              <div className="flex items-center gap-2">
+                <Store className="h-4 w-4 shrink-0 text-success" />
+                <span>
+                  Départ : {order.store_name}
+                  {order.store_address || order.store_city ? ` — ${[order.store_address, order.store_city].filter(Boolean).join(", ")}` : ""}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 shrink-0 text-orange" />
+                <span>
+                  {order.address_detail?.street || "Adresse de livraison"}
+                  {order.address_detail?.city ? `, ${order.address_detail.city}` : ""}
+                </span>
+              </div>
             </div>
             <p className="text-sm font-bold text-orange">{order.total_amount}</p>
           </>
         )}
 
-        {driverPosition || destination ? (
+        {driverPosition || pickup || destination ? (
           <Suspense fallback={<div className="h-56 w-full animate-pulse rounded-2xl bg-muted" />}>
-            <DeliveryMap driverPosition={driverPosition} destination={destination} className="h-56 w-full" />
+            <DeliveryMap driverPosition={driverPosition} pickup={pickup} destination={destination} className="h-56 w-full" />
           </Suspense>
         ) : (
           <div className="rounded-lg border border-dashed border-border bg-muted/40 px-3 py-4 text-center text-xs text-muted-foreground">

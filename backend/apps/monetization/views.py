@@ -44,7 +44,12 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=["post"])
     def broadcast(self, request):
-        """Diffusion d'une notification à tous les acteurs (ou à un rôle, spec admin)."""
+        """Diffusion d'une notification à tous les acteurs (ou à un rôle, spec admin).
+
+        L'admin rédige le sujet et le message, choisit la cible (tous les
+        comptes actifs ou un rôle précis) et le canal. Une ligne Notification
+        est créée pour chaque destinataire, taggée `kind: admin_broadcast`.
+        """
         if not request.user.is_admin():
             raise PermissionDenied("Seul un administrateur peut diffuser une notification.")
         subject = request.data.get("subject", "").strip()
@@ -52,14 +57,24 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
         if not subject or not message:
             raise ValidationError("Les champs 'subject' et 'message' sont requis.")
         role_name = request.data.get("role") or None
-        channel = request.data.get("channel", Notification.Channel.EMAIL)
+        channel = request.data.get("channel", Notification.Channel.PUSH)
+        if channel not in Notification.Channel.values:
+            raise ValidationError("Le canal demandé est invalide.")
         recipients = User.objects.filter(is_active=True)
         if role_name:
             recipients = recipients.filter(user_roles__role__name=role_name)
-        total = 0
+        total = recipients.count()
+        metadata = {"kind": "admin_broadcast", "role": role_name or "all", "recipients": total}
         for user in recipients.iterator():
-            Notification.objects.create(user=user, channel=channel, subject=subject, message=message)
-            total += 1
+            Notification.objects.create(
+                user=user,
+                channel=channel,
+                subject=subject,
+                message=message,
+                metadata=metadata,
+                status=Notification.Status.SENT,
+                sent_at=timezone.now(),
+            )
         log_admin_event(request.user, "other", request, object_type="Notification",
                         summary=f"Diffusion « {subject} » à {total} utilisateur(s) "
                                 f"({'tous' if not role_name else role_name})")

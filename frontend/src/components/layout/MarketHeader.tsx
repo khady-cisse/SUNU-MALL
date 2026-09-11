@@ -24,6 +24,12 @@ const ROLE_LABEL: Record<string, string> = {
   merchant: "Mon tableau de bord",
   driver: "Mes livraisons",
   admin: "Administration",
+  super_admin: "Administration",
+  admin_kyc: "Administration",
+  admin_support: "Administration",
+  admin_finance: "Administration",
+  admin_marketplace: "Administration",
+  admin_delivery: "Administration",
 };
 
 export function MarketHeader() {

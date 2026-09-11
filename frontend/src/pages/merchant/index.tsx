@@ -4,6 +4,8 @@ import {
   ChevronRight,
   Clock,
   Headset,
+  ImagePlus,
+  Loader2,
   Megaphone,
   Package,
   PlusCircle,
@@ -37,10 +39,12 @@ const STATUS_VARIANT: Record<string, "default" | "success" | "warning" | "danger
 };
 
 export default function MerchantDashboardPage() {
-  const { data: own, loading: loadingStores } = useAsync(() => catalogApi.listMyStores(), []);
+  const { data: own, loading: loadingStores, refetch: refetchStores } = useAsync(() => catalogApi.listMyStores(), []);
   const { data: orders, loading: loadingOrders, refetch: refetchOrders } = useAsync(() => ordersApi.listOrders(), []);
   const { data: account } = useAsync(() => monetizationApi.getMySubscriptionState(), []);
   const [assigningDeliveryId, setAssigningDeliveryId] = useState<string | null>(null);
+  const [uploadingLogoId, setUploadingLogoId] = useState<string | null>(null);
+  const [logoErrorId, setLogoErrorId] = useState<string | null>(null);
 
   const orderList = useMemo(() => orders ?? [], [orders]);
   const pendingStoreIds = useMemo(
@@ -83,6 +87,22 @@ export default function MerchantDashboardPage() {
       refetchOrders();
     } finally {
       setAssigningDeliveryId(null);
+    }
+  }
+
+  async function handleLogoChange(storeId: string, e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setUploadingLogoId(storeId);
+    setLogoErrorId(null);
+    try {
+      await catalogApi.uploadStoreLogo(storeId, file);
+      refetchStores();
+    } catch {
+      setLogoErrorId(storeId);
+    } finally {
+      setUploadingLogoId(null);
     }
   }
 
@@ -203,11 +223,49 @@ export default function MerchantDashboardPage() {
       {own.map((store) => (
         <Card key={store.id} className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
-            <p className="font-semibold text-ink">{store.name}</p>
+            <div className="flex items-center gap-3">
+              <label
+                htmlFor={`store-logo-${store.id}`}
+                className="focus-ring relative grid h-14 w-14 shrink-0 cursor-pointer place-items-center overflow-hidden rounded-full border border-dashed border-border bg-muted transition-colors hover:border-orange/50"
+                title="Ajouter / changer le logo de la boutique"
+              >
+                {store.logo_url ? (
+                  <img src={store.logo_url} alt={store.name} className="h-full w-full object-cover" />
+                ) : (
+                  <ImagePlus className="h-5 w-5 text-muted-foreground" />
+                )}
+                {uploadingLogoId === store.id && (
+                  <span className="absolute inset-0 grid place-items-center bg-black/40">
+                    <Loader2 className="h-4 w-4 animate-spin text-white" />
+                  </span>
+                )}
+              </label>
+              <input
+                id={`store-logo-${store.id}`}
+                type="file"
+                accept="image/*"
+                onChange={(e) => handleLogoChange(store.id, e)}
+                disabled={uploadingLogoId === store.id}
+                className="hidden"
+              />
+              <div>
+                <p className="font-semibold text-ink">{store.name}</p>
+                <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <ImagePlus className="h-3 w-3" />
+                  {store.logo_url ? "Cliquez sur le logo pour le modifier" : "Ajoutez le logo de votre boutique"}
+                </p>
+              </div>
+            </div>
             <Badge variant={store.status === "active" ? "success" : store.status === "suspended" ? "danger" : "warning"}>
               {store.status === "active" ? "Approuvée" : store.status === "suspended" ? "Rejetée" : "En attente de validation"}
             </Badge>
           </div>
+          {logoErrorId === store.id && (
+            <p className="flex items-center gap-1.5 text-xs text-danger">
+              <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
+              Impossible d'enregistrer le logo. Réessayez.
+            </p>
+          )}
           {store.status === "inactive" && (
             <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <Clock className="h-3.5 w-3.5 shrink-0" />

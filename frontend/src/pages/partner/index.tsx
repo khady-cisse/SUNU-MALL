@@ -151,7 +151,13 @@ export default function PartnerDashboardPage() {
                   <p className="text-xs text-muted-foreground">
                     {delivery.reference || delivery.id.slice(0, 8)} · {formatDate(delivery.created_at)}
                   </p>
-                  <p className="truncate text-sm font-medium text-ink">Commande n°{delivery.order.slice(0, 8)}</p>
+                  <p className="truncate text-sm font-medium text-ink">
+                      {delivery.order
+                        ? `Commande n°${delivery.order.slice(0, 8)}`
+                        : delivery.global_order
+                          ? `Mission multi-boutiques n°${delivery.global_order.slice(0, 8)}`
+                          : "Mission"}
+                    </p>
                 </div>
                 <Badge variant={DELIVERY_STATUS_VARIANT[delivery.status]}>{DELIVERY_STATUS_LABEL[delivery.status]}</Badge>
               </Link>

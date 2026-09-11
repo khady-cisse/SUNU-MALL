@@ -10,7 +10,7 @@ from .models import Payment, Refund
 from .serializers import PaymentSerializer, RefundSerializer
 from .gateways import PaymentGatewayError, get_gateway
 from apps.monetization.models import Notification
-from apps.orders.models import Order
+from apps.orders.models import GlobalOrder, Order
 from apps.security.utils import log_security_event
 from apps.users.permissions import IsAdmin
 
@@ -66,6 +66,7 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
         return Payment.objects.filter(
             models.Q(order__customer=user)
             | models.Q(order__store__owner=user)
+            | models.Q(global_order__customer=user)
             | models.Q(subscription__subscriber_id=user.id)
         ).distinct()
 
@@ -74,6 +75,9 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
             return
         if payment.order_id is not None:
             owner_id = payment.order.customer_id
+            message = "Seul le client de la commande peut agir sur ce paiement."
+        elif payment.global_order_id is not None:
+            owner_id = payment.global_order.customer_id
             message = "Seul le client de la commande peut agir sur ce paiement."
         else:
             owner_id = payment.subscription.subscriber_id
@@ -115,6 +119,10 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                 payment.order.change_status(Order.Status.PAID, changed_by=request.user)
                 _send_order_confirmation(payment.order)
                 delivery = getattr(payment.order, "delivery", None)
+                if delivery:
+                    delivery.auto_assign()
+            elif payment.global_order_id is not None:
+                delivery = payment.global_order.deliveries.first()
                 if delivery:
                     delivery.auto_assign()
             # Le côté abonnement (activation + facture) est déjà géré par

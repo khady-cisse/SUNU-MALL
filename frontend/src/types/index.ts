@@ -1,4 +1,30 @@
-export type Role = "admin" | "merchant" | "client" | "driver" | "partner";
+export type Role =
+  | "admin"
+  | "super_admin"
+  | "admin_kyc"
+  | "admin_support"
+  | "admin_finance"
+  | "admin_marketplace"
+  | "admin_delivery"
+  | "merchant"
+  | "client"
+  | "driver"
+  | "partner";
+
+/** Rôles d'administration du centre de contrôle (doivent matcher backend Role.ADMIN_ROLES). */
+export const ADMIN_ROLES: Role[] = [
+  "admin",
+  "super_admin",
+  "admin_kyc",
+  "admin_support",
+  "admin_finance",
+  "admin_marketplace",
+  "admin_delivery",
+];
+
+export function isAdminRole(roles: Role[]): boolean {
+  return roles.some((role) => ADMIN_ROLES.includes(role));
+}
 
 /** Forme de réponse standard de la pagination DRF (PageNumberPagination) sur les endpoints `list`. */
 export interface Paginated<T> {
@@ -240,11 +266,28 @@ export interface DeliveryTrackingPoint {
   recorded_at: string;
 }
 
+export interface DeliveryPickup {
+  id: string;
+  store: string;
+  store_name: string;
+  address: string;
+  city: string;
+  latitude: string | null;
+  longitude: string | null;
+  package_count: number;
+  pickup_status: "pending" | "ready" | "picked_up";
+  pickup_order: number;
+  picked_up_at: string | null;
+  notes: string;
+}
+
 export interface Delivery {
   id: string;
   /** Référence lisible DLV-YYYYMMDD-XXXXXX. */
   reference: string;
-  order: string;
+  order: string | null;
+  /** Commande globale multi-boutiques (nullable sur les missions classiques). */
+  global_order: string | null;
   driver: string | null;
   driver_detail: Driver | null;
   /** Entreprise partenaire en charge (spec §2). */
@@ -256,6 +299,15 @@ export interface Delivery {
   delivered_at: string | null;
   last_position: DeliveryTrackingPoint | null;
   eta_seconds: number | null;
+  /** Points de collecte (mission multi-boutiques) — vide sur les courses simples. */
+  pickups: DeliveryPickup[];
+  pickups_collected: number;
+  pickups_total: number;
+  /** Tarif facturé au client, coût partenaire et marge Sunu Mall (read-only). */
+  total_delivery_fee?: string;
+  partner_cost?: string;
+  platform_margin?: string;
+  total_distance?: string | null;
   /** Preuve de livraison (spec §20). */
   proof_method: string | null;
   proof_note: string;
@@ -270,6 +322,45 @@ export interface Delivery {
   refuse_reason: string;
   created_at: string;
   updated_at: string;
+}
+
+/** Commande globale multi-boutiques (spec multi-boutiques) : un panier, N
+ * boutiques, un seul paiement (Payment.global_order). Chaque `orders` est une
+ * sous-commande visible uniquement par le vendeur concerné (isolation §11). */
+export interface GlobalOrder {
+  id: string;
+  reference: string;
+  customer: string;
+  address: string;
+  address_detail: Address;
+  delivery_type: "pickup" | "standard" | "express";
+  items_total: string;
+  delivery_fee: string;
+  total_amount: string;
+  status: "pending" | "paid" | "cancelled";
+  number_of_stores: number;
+  number_of_pickups: number;
+  orders: (Order & { delivery: null; delivery_fee: string; global_order: string })[];
+  delivery: Delivery;
+  payment:
+    | {
+        id: string;
+        method: string;
+        status: "pending" | "success" | "failed" | "refunded";
+        refund: { id: number; status: Refund["status"]; amount: string; refunded_at: string | null } | null;
+      }
+    | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Réponse de `GET/POST /orders/delivery-calculate/` (tarif pré-paiement). */
+export interface DeliveryQuote {
+  number_of_stores: number;
+  number_of_pickups: number;
+  distance: number | null;
+  delivery_fee: string;
+  currency: string;
 }
 
 /**
@@ -305,14 +396,21 @@ export interface Order {
   customer_email: string;
   store: string;
   store_name: string;
+  store_address: string;
+  store_city: string;
+  store_latitude: string | null;
+  store_longitude: string | null;
   address: string;
   address_detail: Address;
   total_amount: string;
   delivery_fee: string;
+  delivery_type?: "pickup" | "standard" | "express";
+  /** Identifiant de la commande globale multi-boutiques (null sinon). */
+  global_order: string | null;
   status: OrderStatus;
   can_be_cancelled: boolean;
   items: OrderItem[];
-  delivery: Delivery;
+  delivery: Delivery | null;
   payment: {
     id: string;
     method: string;
@@ -324,7 +422,10 @@ export interface Order {
 }
 
 export interface CheckoutPayload {
-  store: string;
+  /** Optionnel : fourni pour une commande « une boutique » classique ; omis
+   * pour une commande globale multi-boutiques (les boutiques sont déduites
+   * des articles par le backend — jamais confiées au client). */
+  store?: string | null;
   address: string;
   delivery_type: "pickup" | "standard" | "express";
   payment_method: "wave" | "orange_money" | "card";
@@ -360,6 +461,7 @@ export interface Notification {
   is_read: boolean;
   sent_at: string | null;
   created_at: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface SponsoredProduct {

@@ -12,6 +12,7 @@ import { RoleGuard } from "@/components/auth/RoleGuard";
 import { NotificationBell } from "@/components/layout/NotificationBell";
 import { GlobalSearchModal } from "@/components/admin/GlobalSearchModal";
 import { useAuthStore } from "@/store/authStore";
+import { ADMIN_ROLES } from "@/types";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -156,12 +157,12 @@ export function AdminLayout() {
   );
 
   return (
-    <RoleGuard roles={["admin"]}>
+    <RoleGuard roles={ADMIN_ROLES}>
       <GlobalSearchModal />
       <div className="min-h-screen bg-muted">
         {/* Desktop sidebar */}
         <aside
-          className="fixed inset-y-0 left-0 z-30 hidden flex-col navy-panel transition-all duration-200 md:flex"
+          className="fixed inset-y-0 left-0 z-30 hidden flex-col overflow-hidden navy-panel transition-all duration-200 md:flex"
           style={{ width: collapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH }}
         >
           <div className={cn("flex items-center gap-3 p-4", collapsed && "justify-center")}>
@@ -198,7 +199,7 @@ export function AdminLayout() {
         )}
         <aside
           className={cn(
-            "fixed inset-y-0 left-0 z-50 flex w-64 flex-col navy-panel transition-transform duration-200 md:hidden",
+            "fixed inset-y-0 left-0 z-50 flex w-64 flex-col overflow-hidden navy-panel transition-transform duration-200 md:hidden",
             mobileOpen ? "translate-x-0" : "-translate-x-full",
           )}
         >

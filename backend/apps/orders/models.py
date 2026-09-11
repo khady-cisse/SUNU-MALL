@@ -228,7 +228,7 @@ class DeliveryPartner(models.Model):
         Le coût est figé au moment du calcul à partir de la zone correspondant
         à l'adresse de livraison ; 0 si aucune zone tarifée ne couvre la course.
         """
-        address = delivery.order.address
+        address = delivery.target_address()
         if address is None:
             return Decimal("0")
         pk_list = self.zone_pricings.filter(is_available=True).values_list("id", flat=True)
@@ -430,7 +430,26 @@ class Delivery(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     # Référence lisible DLV-YYYYMMDD-XXXXXX (spec §5), générée automatiquement.
     reference = models.CharField(max_length=30, unique=True, blank=True, default="")
-    order = models.OneToOneField('Order', on_delete=models.CASCADE, related_name='delivery')
+    # Une livraison « classique » est liée à une seule commande (`order`).
+    # Une mission multi-boutiques est liée à une commande globale
+    # (`global_order`) et décrite par ses points de collecte (DeliveryPickup) :
+    # `order` est alors vide. Les deux références sont mutuellement exclusives.
+    order = models.OneToOneField('Order', on_delete=models.CASCADE, related_name='delivery', null=True, blank=True)
+    global_order = models.ForeignKey(
+        'GlobalOrder', on_delete=models.CASCADE, related_name='deliveries', null=True, blank=True
+    )
+    # Totaux financiers et physiques de la mission (spec multi-boutiques §7).
+    # `total_delivery_fee` est le montant facturé au client (Order.delivery_fee
+    # côté sous-commandes reste à 0 : le client paie une fois, globalement) ;
+    # `partner_cost` est le coût payé au partenaire et `platform_margin` la
+    # marge Sunu Mall, calculés côté serveur uniquement.
+    total_delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    partner_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    platform_margin = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total_distance = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    total_weight = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    total_volume = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    estimated_duration_minutes = models.PositiveIntegerField(null=True, blank=True)
     # Partenaire logistique en charge de la course (spec §2). Affecté
     # automatiquement à la commande ou manuellement par un admin.
     partner = models.ForeignKey(
@@ -531,6 +550,42 @@ class Delivery(models.Model):
         if partner:
             self._notify_partner_new_delivery()
 
+    @property
+    def is_multi_store(self):
+        return self.global_order_id is not None
+
+    def linked_orders(self):
+        """Sous-commandes couvertes par cette mission.
+
+        Retourne un QuerySet : la commande simple pour une livraison
+        classique, toutes les sous-commandes pour une mission multi-boutiques.
+        """
+        from .models import Order
+
+        if self.global_order_id:
+            return Order.objects.filter(global_order_id=self.global_order_id)
+        return Order.objects.filter(pk=self.order_id)
+
+    def target_address(self):
+        """Adresse de destination du client pour cette mission."""
+        return self.global_order.address if self.is_multi_store else self.order.address if self.order_id else None
+
+    def target_customer(self):
+        return self.global_order.customer if self.is_multi_store else self.order.customer if self.order_id else None
+
+    def main_store(self):
+        """Boutique de référence (1er point de collecte, sinon la boutique simple)."""
+        first = self.pickups.order_by("pickup_order").first()
+        if first:
+            return first.store
+        return self.order.store if self.order_id else None
+
+    def pickups_status(self):
+        """Statut agrégé des points de collecte : (récupérés, total, tous faits ?)."""
+        total = self.pickups.count()
+        done = self.pickups.filter(pickup_status=DeliveryPickup.Status.PICKED_UP).count()
+        return done, total, total > 0 and done == total
+
     def _notify_partner_new_delivery(self):
         """Prévient l'entreprise partenaire qu'une course lui est confiée.
 
@@ -540,7 +595,7 @@ class Delivery(models.Model):
         """
         message = (
             f"Bonjour,\n\nUne nouvelle livraison ({self.reference}) vous est confiée "
-            f"pour la commande {str(self.order.id)[:8]}.\n"
+            f"pour la commande {str(self.order_id or self.global_order_id)[:8]}.\n"
             "Connectez-vous à votre Espace Partenaire pour affecter un livreur.\n\n"
             "Merci."
         )
@@ -595,7 +650,7 @@ class Delivery(models.Model):
         message = (
             f"Bonjour {self.driver.user.first_name},\n\n"
             f"Une nouvelle mission vous est affectée — livraison {self.reference} "
-            f"(commande {str(self.order.id)[:8]}).\n"
+            f"(commande {str(self.order_id or self.global_order_id)[:8]}).\n"
             "Connectez-vous à votre espace livreur pour accepter et démarrer.\n\n"
             "Merci."
         )
@@ -604,7 +659,7 @@ class Delivery(models.Model):
             channel=Notification.Channel.EMAIL,
             subject=subject,
             message=message,
-            metadata={"delivery_id": str(self.id), "order_id": str(self.order.id)},
+            metadata={"delivery_id": str(self.id), "order_id": str(self.order_id or self.global_order_id)},
         ).send()
 
     def auto_assign(self):
@@ -623,7 +678,7 @@ class Delivery(models.Model):
 
     def suggested_driver(self, limit=5):
         """Meilleurs livreurs candidats (spec §7) — proximité, zone, dispo, charge."""
-        store = self.order.store
+        store = self.main_store()
         queryset = Driver.objects.filter(
             availability_status=Driver.AvailabilityStatus.AVAILABLE,
             is_suspended=False,
@@ -735,7 +790,8 @@ class Delivery(models.Model):
         self.confirmation_otp_expires_at = None
         self._transition_to(self.Status.DELIVERED, user=user, actor_role=actor_role,
                             comment="Livraison confirmée.")
-        self.order.change_status(Order.Status.DELIVERED, changed_by=user or self.order.customer)
+        for order in self.linked_orders():
+            order.change_status(Order.Status.DELIVERED, changed_by=user or order.customer)
         return self
 
     def mark_failed(self, user=None, actor_role="driver", reason=None, comment="", latitude=None, longitude=None):
@@ -824,9 +880,9 @@ class Delivery(models.Model):
         if self.status in (self.Status.DELIVERED, self.Status.CANCELLED):
             return 0
         driver_position = self.driver.current_position() if self.driver else None
-        if not driver_position or not self.order.address_id:
+        address = self.target_address()
+        if not driver_position or address is None:
             return None
-        address = self.order.address
         if address.latitude is None or address.longitude is None:
             return None
         return compute_eta_seconds(
@@ -890,7 +946,7 @@ class Delivery(models.Model):
         subject = "Course annulée"
         message = (
             f"Bonjour {self.driver.user.first_name},\n\n"
-            f"La commande {str(self.order.id)[:8]} qui vous avait été affectée vient d'être annulée "
+            f"La commande {str(self.order_id or self.global_order_id)[:8]} qui vous avait été affectée vient d'être annulée "
             "par le client. Vous n'avez plus besoin d'intervenir sur cette livraison.\n\n"
             "Merci."
         )
@@ -899,12 +955,13 @@ class Delivery(models.Model):
             channel=Notification.Channel.EMAIL,
             subject=subject,
             message=message,
-            metadata={"delivery_id": str(self.id), "order_id": str(self.order.id)},
+            metadata={"delivery_id": str(self.id), "order_id": str(self.order_id or self.global_order_id)},
         )
         notification.send()
 
     def __str__(self):
-        return f"Delivery for Order {self.order.id}"
+        ref = self.order_id or self.global_order_id
+        return f"Delivery for Order {ref}"
 
 
 class DeliveryTracking(models.Model):
@@ -976,7 +1033,20 @@ class Order(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     customer = models.ForeignKey(User, on_delete=models.CASCADE, related_name='orders')
     store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name='orders')
+    # Quand la commande fait partie d'un achat multi-boutiques, elle est la
+    # « sous-commande » d'une commande globale (GlobalOrder). Les commandes
+    # classiques (une boutique) conservent `global_order = None`.
+    global_order = models.ForeignKey(
+        'GlobalOrder', on_delete=models.CASCADE, related_name='orders', null=True, blank=True
+    )
     address = models.ForeignKey(Address, on_delete=models.SET_NULL, null=True, related_name='orders')
+    # Type de livraison choisi par le client (spec §5). Persisté pour l'audit
+    # et le calcul du tarif (la valeur ne vient jamais du frontend pour le
+    # calcul : le montant est toujours recalculé côté serveur).
+    delivery_type = models.CharField(
+        max_length=20, choices=[('pickup', 'pickup'), ('standard', 'standard'), ('express', 'express')],
+        default='standard', blank=True,
+    )
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     status = models.CharField(max_length=50, choices=Status.choices, default=Status.PENDING)
@@ -1171,3 +1241,152 @@ class PartnerInvoice(models.Model):
 
     def __str__(self):
         return f"{self.reference} ({self.partner.name})"
+
+
+class GlobalOrder(models.Model):
+    """Commande globale multi-boutiques (spec multi-boutiques §1).
+
+    Un client achète des produits de plusieurs boutiques dans un seul panier
+    et ne paie qu'une seule fois (un Payment unique). La commande globale
+    regroupe les `Order` (sous-commandes, une par boutique) — chaque vendeur
+    ne voit et ne gère que sa propre sous-commande — et porte un montant de
+    livraison unique facturé au client (`delivery_fee`), distinct des montants
+    produits des sous-commandes.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        PAID = 'paid', 'Paid'
+        CANCELLED = 'cancelled', 'Cancelled'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    reference = models.CharField(max_length=30, unique=True, blank=True, default="")
+    customer = models.ForeignKey(User, on_delete=models.CASCADE, related_name='global_orders')
+    address = models.ForeignKey(Address, on_delete=models.SET_NULL, null=True, blank=True, related_name='global_orders')
+    delivery_type = models.CharField(
+        max_length=20, choices=[('pickup', 'pickup'), ('standard', 'standard'), ('express', 'express')],
+        default='standard',
+    )
+    items_total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    status = models.CharField(max_length=50, choices=Status.choices, default=Status.PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    @classmethod
+    def next_reference(cls):
+        today = timezone.localdate()
+        prefix = f"SM-{today.strftime('%Y%m%d')}-"
+        last = (
+            cls.objects.filter(reference__startswith=prefix)
+            .order_by("-reference")
+            .values_list("reference", flat=True)
+            .first()
+        )
+        sequence = int(last.split("-")[-1]) + 1 if last else 1
+        return f"{prefix}{sequence:06d}"
+
+    def save(self, *args, **kwargs):
+        if not self.reference:
+            self.reference = self.next_reference()
+        super().save(*args, **kwargs)
+
+    @property
+    def number_of_stores(self):
+        return self.orders.count()
+
+    @property
+    def number_of_pickups(self):
+        delivery = self.deliveries.first()
+        return delivery.pickups.count() if delivery else self.orders.count()
+
+    def __str__(self):
+        return f"GlobalOrder {self.reference} ({self.customer.email})"
+
+
+class DeliveryPickup(models.Model):
+    """Un point de collecte d'une mission de livraison. (spec multi-boutiques §7)
+
+    Chaque point est indépendant : la boutique, son adresse/GPS (copie à
+    l'instant T), les colis (nombre/poids/volume) et son propre statut de
+    collecte. La livraison globale ne progresse qu'à la collecte progressive
+    des points requis.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'En attente de collecte'
+        READY = 'ready', 'Prêt — le vendeur a préparé le colis'
+        PICKED_UP = 'picked_up', 'Colis récupéré'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    delivery = models.ForeignKey(Delivery, on_delete=models.CASCADE, related_name='pickups')
+    store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name='delivery_pickups')
+    seller = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='delivery_pickups'
+    )
+    # Copie de l'adresse/GPS au moment de la commande (le marchand peut ensuite
+    # bouger sa boutique : l'itinéraire historique reste fidèle).
+    address = models.CharField(max_length=255, blank=True, default="")
+    city = models.CharField(max_length=100, blank=True, default="")
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    package_count = models.PositiveIntegerField(default=1)
+    package_weight = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    package_volume = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    pickup_status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    pickup_order = models.PositiveIntegerField(default=1)
+    picked_up_at = models.DateTimeField(null=True, blank=True)
+    notes = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ['pickup_order']
+        unique_together = [['delivery', 'store']]
+
+    def __str__(self):
+        return f"{self.delivery.reference} - {self.store.name} (#{self.pickup_order})"
+
+
+class DeliveryPricingRule(models.Model):
+    """Règles de tarification livraison configurables par l'administration.
+
+    (spec multi-boutiques §7, §8) — les montants ne sont jamais codés en dur
+    dans le moteur : tout est lu depuis cette table (placée en singleton actif
+    par défaut). Le client paie toujours le tarif calculé ; la marge Sunu Mall
+    = tarif facturé − coût partenaire, jamais mélangée aux revenus produits.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100, default="Règles par défaut")
+    is_active = models.BooleanField(default=True)
+    base_fee = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('1500'))
+    extra_pickup_fee = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('800'))
+    per_km_fee = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('150'))
+    weight_per_kg_fee = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'))
+    volume_per_m3_fee = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'))
+    package_fee = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0'))
+    express_surcharge = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('800'))
+    min_fee = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('1000'))
+    max_fee = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    @classmethod
+    def active(cls):
+        return cls.objects.filter(is_active=True).first()
+
+    @classmethod
+    def get_or_create_default(cls):
+        rule = cls.active()
+        if rule is None:
+            rule = cls.objects.create(name="Règles par défaut", is_active=True)
+        return rule
+
+    def __str__(self):
+        return f"{self.name} ({self.base_fee} FCFA + {self.extra_pickup_fee}/point + {self.per_km_fee}/km)"

@@ -12,6 +12,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { useAuthStore } from "@/store/authStore";
 import { ApiError } from "@/lib/api";
 import { formatPrice } from "@/lib/utils";
+import type { GlobalOrder, Order } from "@/types";
 
 function SetPasswordPrompt() {
   const updateUser = useAuthStore((s) => s.updateUser);
@@ -77,12 +78,39 @@ function SetPasswordPrompt() {
 export default function OrderConfirmedPage() {
   const [searchParams] = useSearchParams();
   const orderId = searchParams.get("order");
+  const globalOrderId = searchParams.get("gorder");
   const user = useAuthStore((s) => s.user);
-  const { data: order, loading } = useAsync(() => (orderId ? ordersApi.getOrder(orderId) : Promise.resolve(null)), [orderId]);
+  const { data: order, loading } = useAsync(
+    () => {
+      if (orderId) return ordersApi.getOrder(orderId) as Promise<Order | GlobalOrder | null>;
+      if (globalOrderId) return ordersApi.getGlobalOrder(globalOrderId) as Promise<Order | GlobalOrder | null>;
+      return Promise.resolve(null) as Promise<Order | GlobalOrder | null>;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [orderId, globalOrderId],
+  );
 
-  if (!orderId) return <EmptyState icon={PackageX} title="Aucune commande à afficher" />;
+  if (!orderId && !globalOrderId) return <EmptyState icon={PackageX} title="Aucune commande à afficher" />;
   if (loading) return <Spinner label="Chargement de votre commande…" />;
   if (!order) return <EmptyState icon={PackageX} title="Commande introuvable" />;
+
+  const isGlobal = "number_of_stores" in order;
+
+  const summary = isGlobal
+    ? (() => {
+        const g = order as GlobalOrder;
+        return {
+          id: order.id,
+          storeName:
+            g.number_of_stores > 1 ? `${g.number_of_stores} boutiques` : (g.orders[0]?.store_name ?? "boutique"),
+          total: order.total_amount,
+        };
+      })()
+    : {
+        id: order.id,
+        storeName: (order as Order).store_name,
+        total: order.total_amount,
+      };
 
   return (
     <div className="flex flex-col items-center gap-4 py-10 text-center">
@@ -98,13 +126,15 @@ export default function OrderConfirmedPage() {
       </div>
       <h1 className="font-display text-2xl font-extrabold text-gray-900">Commande confirmée !</h1>
       <p className="text-sm text-muted-foreground">
-        Commande n°{order.id.slice(0, 8)} chez <strong className="text-ink">{order.store_name}</strong> —{" "}
-        <strong className="text-orange">{formatPrice(order.total_amount)}</strong>
+        Commande n°{summary.id.slice(0, 8)} — <strong className="text-ink">{summary.storeName}</strong> -{" "}
+        <strong className="text-orange">{formatPrice(summary.total)}</strong>
       </p>
       <div className="flex gap-3">
-        <Link to={`/tracking?order=${order.id}`}>
-          <Button>Suivre ma livraison</Button>
-        </Link>
+        {!isGlobal && (
+          <Link to={`/tracking?order=${summary.id}`}>
+            <Button>Suivre ma livraison</Button>
+          </Link>
+        )}
         <Link to="/orders">
           <Button variant="secondary">Voir mes commandes</Button>
         </Link>

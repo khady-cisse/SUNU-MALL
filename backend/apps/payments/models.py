@@ -42,12 +42,15 @@ class Payment(models.Model):
         REFUNDED = 'refunded', 'Refunded'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    # Un paiement règle soit une commande, soit un abonnement — jamais les
-    # deux (contrainte ci-dessous) : d'où les deux FK optionnelles plutôt
-    # qu'une seule relation polymorphe, plus simple à requêter/valider.
+    # Un paiement règle soit une commande, soit une commande globale
+    # multi-boutiques, soit un abonnement — jamais deux à la fois (contrainte
+    # ci-dessous) : d'où les FK optionnelles plutôt qu'une relation polymorphe.
     # Un abonnement peut avoir PLUSIEURS paiements (souscription initiale,
     # renouvellement, changement de formule) : FK, pas OneToOne.
     order = models.OneToOneField(Order, on_delete=models.CASCADE, related_name='payment', null=True, blank=True)
+    global_order = models.ForeignKey(
+        'orders.GlobalOrder', on_delete=models.CASCADE, related_name='payments', null=True, blank=True
+    )
     subscription = models.ForeignKey(
         Subscription, on_delete=models.CASCADE, related_name='payments', null=True, blank=True
     )
@@ -74,10 +77,11 @@ class Payment(models.Model):
         constraints = [
             models.CheckConstraint(
                 check=(
-                    models.Q(order__isnull=False, subscription__isnull=True)
-                    | models.Q(order__isnull=True, subscription__isnull=False)
+                    models.Q(order__isnull=False, global_order__isnull=True, subscription__isnull=True)
+                    | models.Q(order__isnull=True, global_order__isnull=False, subscription__isnull=True)
+                    | models.Q(order__isnull=True, global_order__isnull=True, subscription__isnull=False)
                 ),
-                name='payment_targets_order_xor_subscription',
+                name='payment_targets_one_billing_object',
             )
         ]
 
@@ -101,6 +105,25 @@ class Payment(models.Model):
             )
             sync_plan_from_subscription(self.subscription)
             register_subscription_revenue(self.subscription, self.amount)
+        elif self.global_order_id:
+            # Paiement global multi-boutiques : une transaction globale est
+            # tracée, puis la commission de chaque sous-commande est réglée
+            # individuellement (par vendeur) — jamais deux fois.
+            Transaction.objects.create(
+                payment=self,
+                type=Transaction.Type.SALE,
+                payee_type="global_order",
+                payee_id=self.global_order_id,
+                amount=self.amount,
+            )
+            from apps.commissions.services import settle_commission_for_order
+
+            for sub_order in self.global_order.orders.filter(status="pending"):
+                sub_order.change_status(sub_order.Status.PAID)
+                settle_commission_for_order(sub_order)
+            if self.global_order.status == "pending":
+                self.global_order.status = "paid"
+                self.global_order.save(update_fields=["status"])
         else:
             Transaction.create_for_payment(self)
             from apps.commissions.services import settle_commission_for_order

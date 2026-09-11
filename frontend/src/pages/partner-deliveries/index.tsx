@@ -59,7 +59,13 @@ export default function PartnerDeliveriesPage() {
                     <p className="text-xs font-medium text-muted-foreground">
                       {delivery.reference || delivery.id.slice(0, 8)}
                     </p>
-                    <p className="truncate font-semibold text-ink">Commande n°{delivery.order.slice(0, 8)}</p>
+                    <p className="truncate font-semibold text-ink">
+                      {delivery.order
+                        ? `Commande n°${delivery.order.slice(0, 8)}`
+                        : delivery.global_order
+                          ? `Mission multi-boutiques n°${delivery.global_order.slice(0, 8)}`
+                          : "Mission"}
+                    </p>
                   </div>
                   <Badge variant={DELIVERY_STATUS_VARIANT[delivery.status]} size="sm">
                     {DELIVERY_STATUS_LABEL[delivery.status]}

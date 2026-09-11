@@ -1,7 +1,7 @@
-import type { Role } from "@/store/authStore";
+import { isAdminRole, type Role } from "@/types";
 
 export function roleHomePath(roles: Role[]): string {
-  if (roles.includes("admin")) return "/admin";
+  if (isAdminRole(roles)) return "/admin";
   if (roles.includes("merchant")) return "/merchant";
   if (roles.includes("driver")) return "/driver-dashboard";
   if (roles.includes("partner")) return "/partner";
@@ -9,7 +9,7 @@ export function roleHomePath(roles: Role[]): string {
 }
 
 export function roleNotificationsPath(roles: Role[]): string {
-  if (roles.includes("admin")) return "/admin-notifications";
+  if (isAdminRole(roles)) return "/admin-notifications";
   if (roles.includes("merchant")) return "/merchant-notifications";
   if (roles.includes("driver")) return "/driver-notifications";
   if (roles.includes("partner")) return "/partner-notifications";

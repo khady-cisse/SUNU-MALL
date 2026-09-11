@@ -1,8 +1,9 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 from .views import (
-    AddressViewSet, DeliveryEventStreamView, DeliveryViewSet, DriverViewSet,
-    OrderViewSet, PartnerSpaceViewSet, PartnerViewSet,
+    AddressViewSet, DeliveryEventStreamView, DeliveryPricingRuleViewSet,
+    DeliveryViewSet, DriverViewSet, GlobalOrderViewSet, OrderViewSet,
+    PartnerSpaceViewSet, PartnerViewSet,
 )
 
 router = DefaultRouter()
@@ -10,6 +11,8 @@ router.register("addresses", AddressViewSet, basename="address")
 router.register("drivers", DriverViewSet, basename="driver")
 router.register("deliveries", DeliveryViewSet, basename="delivery")
 router.register("partners", PartnerViewSet, basename="partner")
+router.register("global-orders", GlobalOrderViewSet, basename="global-order")
+router.register("delivery-pricing-rules", DeliveryPricingRuleViewSet, basename="delivery-pricing-rule")
 router.register("", OrderViewSet, basename="order")
 
 urlpatterns = [

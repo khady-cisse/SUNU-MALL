@@ -14,6 +14,11 @@ export function markAllNotificationsRead() {
   return apiPost<void>("/monetization/notifications/read-all/");
 }
 
+/** Publie une notification rédigée par un admin (tous les comptes actifs ou un rôle). */
+export function broadcastNotification(payload: { subject: string; message: string; role?: string; channel?: string }) {
+  return apiPost<{ sent: number; role: string }>("/monetization/notifications/broadcast/", payload);
+}
+
 export async function listSubscriptionPlans() {
   const data = await apiGet<Paginated<SubscriptionPlan>>("/monetization/subscription-plans/");
   return data.results;

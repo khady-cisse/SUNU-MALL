@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ShoppingCart, Store as StoreIcon, Trash2 } from "lucide-react";
+import { ShoppingCart, Trash2 } from "lucide-react";
 import { useAsync } from "@/hooks/useAsync";
 import * as shoppingApi from "@/api/shopping";
 import * as catalogApi from "@/api/catalog";
@@ -15,16 +15,6 @@ import { useCartStore } from "@/store/cartStore";
 import { formatPrice } from "@/lib/utils";
 import type { CartItem as ApiCartItem, Store } from "@/types";
 
-function groupByStore(items: ApiCartItem[]) {
-  const groups = new Map<string, ApiCartItem[]>();
-  for (const item of items) {
-    const list = groups.get(item.store) ?? [];
-    list.push(item);
-    groups.set(item.store, list);
-  }
-  return Array.from(groups.entries());
-}
-
 export default function CartPage() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
@@ -33,8 +23,7 @@ export default function CartPage() {
   const updateCartItem = useCartStore((s) => s.updateItem);
   const removeCartItem = useCartStore((s) => s.removeItem);
 
-  const groups = useMemo(() => groupByStore(cart?.items ?? []), [cart]);
-  const storeIds = useMemo(() => groups.map(([storeId]) => storeId), [groups]);
+  const storeIds = useMemo(() => Array.from(new Set((cart?.items ?? []).map((i) => i.store))), [cart]);
   const { data: storesById } = useAsync(async () => {
     const entries = await Promise.all(storeIds.map(async (id) => [id, await catalogApi.getStore(id)] as const));
     return Object.fromEntries(entries) as Record<string, Store>;
@@ -54,8 +43,10 @@ export default function CartPage() {
     refetch();
   }
 
-  function goToCheckout(storeId: string, items: ApiCartItem[]) {
-    startCheckout(storeId, storeName(storeId), items);
+  function goToCheckout() {
+    // Boutique unique : flux classique. Plusieurs boutiques : flux global
+    // (storeId = null, les boutiques sont déduites des articles par le backend).
+    startCheckout(storeIds.length === 1 ? storeIds[0] : null, storeIds.length === 1 ? storeName(storeIds[0]) : null, cart!.items);
     navigate("/checkout-address");
   }
 
@@ -79,49 +70,57 @@ export default function CartPage() {
   return (
     <div className="flex flex-col gap-6">
       <h1 className="font-display text-2xl font-bold text-gray-900">Mon panier</h1>
-      {groups.map(([storeId, items]) => {
-        const subtotal = items.reduce((sum, i) => sum + i.subtotal, 0);
-        return (
-          <Card key={storeId} className="flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <p className="flex items-center gap-2 font-display font-bold text-gray-800">
-                <StoreIcon className="h-4 w-4 text-orange" />
-                {storeName(storeId)}
-              </p>
-              <Button size="sm" onClick={() => goToCheckout(storeId, items)}>
-                Commander cette boutique
-              </Button>
-            </div>
-            {items.map((item) => (
-              <div key={item.id} className="flex items-center gap-3 border-t border-border pt-3">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-ink">{item.product_name}</p>
-                  <p className="text-sm font-bold text-orange">{formatPrice(item.unit_price)}</p>
-                </div>
-                <QuantityStepper size="sm" value={item.quantity} onChange={(q) => updateQty(item.id, q)} />
-                <p className="w-20 shrink-0 text-right text-sm font-semibold text-ink">{formatPrice(item.subtotal)}</p>
-                <button
-                  onClick={() => remove(item.id)}
-                  aria-label="Retirer du panier"
-                  className="focus-ring rounded-full p-2 text-muted-foreground transition-colors hover:bg-red-50 hover:text-danger"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
+
+      <Card className="overflow-x-auto">
+        <table className="w-full min-w-[560px] text-left text-sm">
+          <thead>
+            <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+              <th className="py-3 pr-4 font-semibold">Produit</th>
+              <th className="py-3 pr-4 font-semibold">Boutique</th>
+              <th className="py-3 pr-4 text-center font-semibold">Quantité</th>
+              <th className="py-3 pr-4 text-right font-semibold">Sous-total</th>
+              <th className="py-3 w-10" aria-label="Actions" />
+            </tr>
+          </thead>
+          <tbody>
+            {cart.items.map((item) => (
+              <tr key={item.id} className="border-b border-border last:border-b-0">
+                <td className="py-3 pr-4">
+                  <p className="font-semibold text-ink">{item.product_name}</p>
+                  <p className="text-xs text-muted-foreground">{formatPrice(item.unit_price)} / unité</p>
+                </td>
+                <td className="py-3 pr-4 text-muted-foreground">{storeName(item.store)}</td>
+                <td className="py-3 pr-4 text-center">
+                  <QuantityStepper size="sm" value={item.quantity} onChange={(q) => updateQty(item.id, q)} />
+                </td>
+                <td className="py-3 pr-4 text-right font-semibold text-ink">{formatPrice(item.subtotal)}</td>
+                <td className="py-3 text-right">
+                  <button
+                    onClick={() => remove(item.id)}
+                    aria-label={`Retirer ${item.product_name} du panier`}
+                    className="focus-ring rounded-full p-2 text-muted-foreground transition-colors hover:bg-red-50 hover:text-danger"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </td>
+              </tr>
             ))}
-            <div className="flex items-center justify-between border-t border-border pt-3 text-sm font-bold text-ink">
-              <span>Sous-total</span>
-              <span className="text-orange">{formatPrice(subtotal)}</span>
-            </div>
-          </Card>
-        );
-      })}
-      {groups.length > 1 && (
-        <div className="flex items-center justify-between rounded-xl border border-border bg-muted/40 px-5 py-4 text-sm font-bold text-ink">
-          <span>Total ({groups.length} boutiques)</span>
-          <span className="font-display text-lg text-orange">{formatPrice(grandTotal)}</span>
+          </tbody>
+        </table>
+      </Card>
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          {storeIds.length > 1 ? `${storeIds.length} boutiques dans ce panier — une seule livraison.` : "Une seule boutique dans ce panier."}
+        </p>
+        <div className="flex items-center gap-4">
+          <div className="text-right">
+            <p className="text-xs text-muted-foreground">Total</p>
+            <p className="font-display text-xl font-extrabold text-orange">{formatPrice(grandTotal)}</p>
+          </div>
+          <Button onClick={goToCheckout}>Passer commande</Button>
         </div>
-      )}
+      </div>
     </div>
   );
 }

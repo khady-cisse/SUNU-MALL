@@ -122,7 +122,7 @@ export default function PartnerDeliveryPage() {
 
       <Card className="flex flex-col gap-3">
         <p className="text-sm text-muted-foreground">
-          Commande n°{delivery.order.slice(0, 8)} · passée le {formatDate(delivery.created_at)}
+          {delivery.order ? `Commande n°${delivery.order.slice(0, 8)}` : delivery.global_order ? `Mission multi-boutiques n°${delivery.global_order.slice(0, 8)}` : "Livraison"} · passée le {formatDate(delivery.created_at)}
           {delivery.picked_up_at ? ` · colis récupéré le ${formatDate(delivery.picked_up_at)}` : ""}
           {delivery.delivered_at ? ` · livrée le ${formatDate(delivery.delivered_at)}` : ""}
         </p>

@@ -14,18 +14,24 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import AuthenticationFailed, NotFound, PermissionDenied, ValidationError
 from rest_framework.response import Response
 from .models import (
-    Address, Delivery, DeliveryEvent, DeliveryPartner, DeliveryTracking, Driver,
-    Order, OrderItem, PartnerInvoice, PartnerZonePricing,
+    Address, Delivery, DeliveryEvent, DeliveryPartner, DeliveryPickup,
+    DeliveryPricingRule, DeliveryTracking, Driver, GlobalOrder, Order,
+    OrderItem, PartnerInvoice, PartnerZonePricing,
 )
-from .pricing import best_delivery_partner, compute_delivery_fee
+from .pricing import (
+    best_delivery_partner, compute_delivery_fee, compute_delivery_fee_multi,
+    optimize_route, route_distance_km,
+)
 from .realtime import subscribe_delivery_events
 from .serializers import (
-    AddressSerializer, CheckoutSerializer, DeliveryQuoteSerializer, DeliverySerializer,
-    DeliveryTrackingSerializer, DriverSerializer, OrderSerializer,
-    DeliveryEventSerializer, DeliveryPartnerSerializer, DeliveryPartnerDetailSerializer,
+    AddressSerializer, CheckoutSerializer, DeliveryCalculateSerializer,
+    DeliveryPickupSerializer, DeliveryPricingRuleSerializer, DeliveryQuoteSerializer,
+    DeliverySerializer, DeliveryTrackingSerializer, DriverSerializer,
+    GlobalOrderSerializer, OrderSerializer, DeliveryEventSerializer,
+    DeliveryPartnerSerializer, DeliveryPartnerDetailSerializer,
     PartnerInvoiceSerializer, PartnerZonePricingSerializer,
 )
-from apps.catalog.models import ProductVariant, Store
+from apps.catalog.models import Product, ProductVariant, Store
 from apps.payments.models import Payment, Refund
 from apps.shopping.models import CartItem
 from apps.users.models import Role, UserRole
@@ -72,6 +78,42 @@ class OrderViewSet(viewsets.ModelViewSet):
         fee = compute_delivery_fee(store, address, data["delivery_type"])
         return Response({"delivery_fee": str(fee)})
 
+    @action(detail=False, methods=["post"], url_path="delivery-calculate")
+    def delivery_calculate(self, request):
+        """Calcule le tarif de livraison multi-boutiques AVANT paiement (spec §8).
+
+        Entrée : les articles du panier, l'adresse et le type. Les boutiques
+        sont déduites des articles (jamais fournies par le client) ; le tarif
+        est recalculé par le backend au moment du checkout — le frontend ne
+        transmet aucune valeur monétaire.
+        """
+        serializer = DeliveryCalculateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        address = get_object_or_404(Address, pk=data["address"], user=request.user)
+
+        wants = {str(item["product_variant"]): item["quantity"] for item in data["items"]}
+        variants = ProductVariant.objects.filter(id__in=wants.keys()).select_related("product__store")
+        if variants.count() != len(wants):
+            raise ValidationError("Un article du panier n'existe plus. Actualisez votre panier.")
+
+        stores = {v.product.store for v in variants}
+        stores = sorted(stores, key=lambda s: s.name)
+        fee = compute_delivery_fee_multi(stores, address, data["delivery_type"])
+
+        distance = None
+        coords = [s for s in stores if s.latitude is not None and s.longitude is not None]
+        if coords and address.latitude is not None and address.longitude is not None:
+            distance = float(route_distance_km(coords, address.latitude, address.longitude))
+
+        return Response({
+            "number_of_stores": len(stores),
+            "number_of_pickups": len(stores),
+            "distance": distance,
+            "delivery_fee": str(fee),
+            "currency": "XOF",
+        })
+
     @action(detail=False, methods=["post"])
     def checkout(self, request):
         """
@@ -79,11 +121,27 @@ class OrderViewSet(viewsets.ModelViewSet):
         et son paiement en attente à partir du panier validé côté frontend
         (écrans checkout-address / -delivery / -payment), puis retire du
         panier les articles achetés.
+
+        Deux chemins sont possibles :
+        - `store` fourni  : commande classique, une boutique (rétrocompatible) ;
+        - `store` absent  : commande globale multi-boutiques (GlobalOrder,
+          une sous-commande par boutique, une mission avec N points de
+          collecte, un paiement unique).
+
+        Le tarif de livraison est TOUJOURS recalculé côté serveur — la valeur
+        éventuellement affichée par le frontend n'est jamais reçue.
         """
         serializer = CheckoutSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
+        if data.get("store"):
+            return self._checkout_single(request, data)
+
+        address = get_object_or_404(Address, pk=data["address"], user=request.user)
+        return self._checkout_multistore(request, data, address)
+
+    def _checkout_single(self, request, data):
         store = get_object_or_404(Store, pk=data["store"])
         address = get_object_or_404(Address, pk=data["address"], user=request.user)
         delivery_fee = compute_delivery_fee(store, address, data["delivery_type"])
@@ -103,6 +161,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 customer=request.user,
                 store=store,
                 address=address,
+                delivery_type=data["delivery_type"],
                 delivery_fee=delivery_fee,
             )
 
@@ -128,7 +187,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 total += order_item.subtotal()
 
             order.total_amount = total + order.delivery_fee
-            order.save(update_fields=["total_amount"])
+            order.save(update_fields=["total_amount", "delivery_type"])
 
             delivery = Delivery.objects.create(order=order)
             # Affectation automatique : le meilleur partenaire couvrant la zone
@@ -151,6 +210,143 @@ class OrderViewSet(viewsets.ModelViewSet):
         SalesStatistic.compute_for_store(store, order.created_at.date())
 
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
+
+    def _checkout_multistore(self, request, data, address):
+        """
+        Passage de commande multi-boutiques : une seule commande globale
+        (GlobalOrder), une sous-commande par boutique (Order), une mission de
+        livraison décrivant N points de collecte (Delivery + DeliveryPickup),
+        un seul paiement global (Payment.global_order).
+        """
+        delivery_type = data["delivery_type"]
+        payment_method = data["payment_method"]
+
+        # 1. Articles → boutiques (jamais confiées au client).
+        wants = {str(item["product_variant"]): item["quantity"] for item in data["items"]}
+        variants = ProductVariant.objects.filter(id__in=wants.keys()).select_related("product__store", "inventory")
+        if variants.count() != len(wants):
+            raise ValidationError("Un article du panier n'existe plus. Actualisez votre panier.")
+
+        grouped = {}
+        for variant in variants:
+            store = variant.product.store
+            if store.status != Store.Status.ACTIVE:
+                raise ValidationError(
+                    f"La boutique « {store.name} » est momentanément indisponible."
+                )
+            if variant.product.status != Product.Status.ACTIVE:
+                raise ValidationError(
+                    f"Le produit « {variant.product.name} » n'est plus disponible."
+                )
+            grouped.setdefault(store, []).append((variant, wants[str(variant.id)]))
+
+        from apps.commissions.services import can_receive_orders
+        for store in grouped:
+            if not can_receive_orders(store.owner):
+                raise ValidationError(
+                    f"Le vendeur de « {store.name} » ne peut plus recevoir de nouvelles "
+                    "commandes (abonnement commerçant expiré). Retirez ses articles du panier."
+                )
+
+        # 2. Tarif recalculé côté serveur (le client ne transmet aucun montant).
+        delivery_fee = compute_delivery_fee_multi(list(grouped.keys()), address, delivery_type)
+
+        with transaction.atomic():
+            global_order = GlobalOrder.objects.create(
+                customer=request.user,
+                address=address,
+                delivery_type=delivery_type,
+            )
+
+            items_total = Decimal("0")
+            for store, lines in grouped.items():
+                order = Order.objects.create(
+                    customer=request.user,
+                    store=store,
+                    address=address,
+                    delivery_type=delivery_type,
+                    global_order=global_order,
+                )
+                subtotal = Decimal("0")
+                for variant, quantity in lines:
+                    inventory = getattr(variant, "inventory", None)
+                    if inventory is not None and not inventory.reserve(quantity):
+                        raise ValidationError(
+                            f"Stock insuffisant pour « {variant.product.name} » "
+                            f"({variant.sku}). Disponible : {inventory.available()}."
+                        )
+                    order_item = OrderItem.objects.create(
+                        order=order,
+                        product_variant=variant,
+                        quantity=quantity,
+                        unit_price=variant.price,
+                    )
+                    subtotal += order_item.subtotal()
+                order.total_amount = subtotal
+                order.save(update_fields=["total_amount", "delivery_type"])
+                items_total += subtotal
+
+            global_order.items_total = items_total
+            global_order.delivery_fee = delivery_fee
+            global_order.total_amount = items_total + delivery_fee
+            global_order.save(update_fields=["items_total", "delivery_fee", "total_amount"])
+
+            # 3. Mission multi-collectes.
+            delivery = Delivery.objects.create(global_order=global_order)
+            total_distance = None
+            coords_stores = [
+                s for s in grouped
+                if s.latitude is not None and s.longitude is not None
+            ]
+            order_map = {s.id: (i + 1) for i, s in enumerate(grouped.keys())}
+            if coords_stores and address.latitude is not None and address.longitude is not None:
+                total_distance = route_distance_km(coords_stores, address.latitude, address.longitude)
+                driving_order = list(reversed(optimize_route(coords_stores, address.latitude, address.longitude)))
+                order_map = {s.id: (i + 1) for i, s in enumerate(driving_order)}
+
+            for store, lines in grouped.items():
+                DeliveryPickup.objects.create(
+                    delivery=delivery,
+                    store=store,
+                    seller=store.owner,
+                    address=store.address,
+                    city=store.city,
+                    latitude=store.latitude,
+                    longitude=store.longitude,
+                    package_count=len(lines) or 1,
+                    pickup_order=order_map.get(store.id, 1),
+                )
+
+            delivery.total_delivery_fee = delivery_fee
+            delivery.total_distance = total_distance
+            partner = best_delivery_partner(address)
+            if partner is not None:
+                delivery.partner_cost = partner.partner_cost_for(delivery)
+                delivery.platform_margin = delivery_fee - delivery.partner_cost
+                delivery.assign_partner(partner)
+            else:
+                delivery.platform_margin = delivery_fee
+            delivery.save(update_fields=[
+                "total_delivery_fee", "partner_cost", "platform_margin", "total_distance",
+            ])
+
+            # 4. Paiement unique.
+            Payment.objects.create(
+                global_order=global_order,
+                amount=global_order.total_amount,
+                method=payment_method,
+            )
+
+            # 5. Retrait des articles achetés du panier.
+            CartItem.objects.filter(
+                cart__user=request.user, product_variant_id__in=wants.keys()
+            ).delete()
+
+        from apps.analytics.models import SalesStatistic
+        for order in global_order.orders.all():
+            SalesStatistic.compute_for_store(order.store, order.created_at.date())
+
+        return Response(GlobalOrderSerializer(global_order).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
@@ -380,7 +576,9 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
             return Delivery.objects.filter(partner__user=user)
         if user.has_role(Role.RoleName.DRIVER):
             return Delivery.objects.filter(driver__user=user)
-        return Delivery.objects.filter(order__store__owner=user)
+        return Delivery.objects.filter(
+            models.Q(order__store__owner=user) | models.Q(global_order__orders__store__owner=user)
+        ).distinct()
 
     def _partner_for(self, user):
         return DeliveryPartner.objects.filter(user=user).first()
@@ -397,7 +595,9 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
             if delivery.partner_id != (partner.id if partner else None):
                 raise PermissionDenied("Cette livraison n'appartient pas à votre entreprise.")
         elif not user.is_admin() and not (
-            user.has_role(Role.RoleName.MERCHANT) and delivery.order.store.owner_id == user.id
+            user.has_role(Role.RoleName.MERCHANT)
+            and delivery.main_store() is not None
+            and delivery.main_store().owner_id == user.id
         ):
             raise PermissionDenied("Vous ne pouvez pas consulter cette livraison.")
         suggested = delivery.suggested_driver(limit=int(request.query_params.get("limit", 5)))
@@ -405,7 +605,7 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({"drivers": [], "message": "Aucun livreur disponible pour le moment."})
         return Response({
             "drivers": DriverSerializer(
-                [suggested], many=True, context={"store": delivery.order.store}
+                [suggested], many=True, context={"store": delivery.main_store()}
             ).data,
         })
 
@@ -424,14 +624,18 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
         partner = self._partner_for(user) if is_partner else None
         if not user.is_admin() and not (
             (is_partner and delivery.partner_id == (partner.id if partner else None))
-            or (user.has_role(Role.RoleName.MERCHANT) and delivery.order.store.owner_id == user.id)
+            or (
+                user.has_role(Role.RoleName.MERCHANT)
+                and delivery.main_store() is not None
+                and delivery.main_store().owner_id == user.id
+            )
         ):
             raise PermissionDenied("Vous ne pouvez affecter un livreur qu'aux livraisons de votre entreprise.")
         driver = get_object_or_404(Driver, pk=request.data.get("driver"))
         if is_partner and driver.partner_id != (partner.id if partner else None):
             raise ValidationError("Vous ne pouvez affecter que des livreurs de votre entreprise.")
 
-        store = delivery.order.store
+        store = delivery.main_store()
         if store.latitude is None or store.longitude is None:
             raise ValidationError(
                 "La boutique n'a pas de coordonnées GPS : impossible de vérifier où récupérer le colis."
@@ -484,6 +688,67 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
         except ValueError as exc:
             raise ValidationError(str(exc))
         return Response(DeliverySerializer(delivery).data)
+
+    @action(detail=True, methods=["post"], url_path="collect-pickup")
+    def collect_pickup(self, request, pk=None):
+        """Le livreur marque un point de collecte comme récupéré (multi-boutiques).
+
+        BODY : `{pickup: <uuid>}` (un DeliveryPickup de la mission).
+        Règles : seul le livreur affecté (ou l'admin) ; les collectes suivent
+        l'ordre (`pickup_order`) ; quand tous les colis requis sont récupérés,
+        la course passe en `picked_up` et le client est prévenu.
+        """
+        delivery = get_object_or_404(Delivery, pk=pk)
+        user = request.user
+        is_admin = user.is_admin()
+        is_assigned_driver = delivery.driver and delivery.driver.user_id == user.id
+        if not is_admin and not is_assigned_driver:
+            raise PermissionDenied("Seul le livreur affecté peut valider une collecte.")
+        if not delivery.is_multi_store:
+            raise ValidationError("Cette livraison n'a pas de points de collecte multiples.")
+        if delivery.status in (Delivery.Status.DELIVERED, Delivery.Status.CANCELLED):
+            raise ValidationError("La course est déjà terminée.")
+
+        pickup = get_object_or_404(
+            DeliveryPickup, pk=request.data.get("pickup"), delivery=delivery
+        )
+        if pickup.pickup_status == DeliveryPickup.Status.PICKED_UP:
+            raise ValidationError("Ce colis a déjà été récupéré.")
+        if pickup.pickup_order > 1:
+            previous = delivery.pickups.filter(
+                pickup_order__lt=pickup.pickup_order
+            ).exclude(pickup_status=DeliveryPickup.Status.PICKED_UP).order_by("pickup_order").first()
+            if previous:
+                raise ValidationError(
+                    f"Le point de collecte n°{previous.pickup_order} "
+                    f"(« {previous.store.name} ») doit être récupéré avant celui-ci."
+                )
+
+        pickup.pickup_status = DeliveryPickup.Status.PICKED_UP
+        pickup.picked_up_at = timezone.now()
+        pickup.save(update_fields=["pickup_status", "picked_up_at"])
+        delivery.record_event(
+            "pickup_collected", user=user,
+            actor_role="driver" if not is_admin else "admin",
+            comment=f"Colis récupéré : {pickup.store.name}",
+            metadata={"pickup": str(pickup.id), "store": str(pickup.store_id)},
+        )
+
+        done, total, all_done = delivery.pickups_status()
+        if all_done and delivery.status in (
+            Delivery.Status.ASSIGNED, Delivery.Status.ACCEPTED, Delivery.Status.PICKUP_PENDING,
+        ):
+            delivery._transition_to(
+                Delivery.Status.PICKED_UP, user=user, actor_role="driver",
+                comment="Tous les colis sont récupérés.",
+            )
+            self._notify_customer_pickup(delivery)
+            delivery.broadcast_status("Tous les colis sont récupérés : en route vers vous !")
+
+        data = DeliverySerializer(delivery).data
+        data["pickups_collected"] = done
+        data["pickups_total"] = total
+        return Response(data)
 
     @action(detail=True, methods=["post"], url_path="status")
     def update_status(self, request, pk=None):
@@ -546,7 +811,8 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
                               previous_status=delivery.status, new_status=new_status)
 
         if new_status == Delivery.Status.DELIVERED:
-            delivery.order.change_status(Order.Status.DELIVERED, changed_by=user)
+            for order in delivery.linked_orders():
+                order.change_status(Order.Status.DELIVERED, changed_by=user)
 
         status_messages = {
             Delivery.Status.ASSIGNED: "Un livreur vous est affecté.",
@@ -641,18 +907,21 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
         par le livreur)."""
         from apps.monetization.models import Notification
 
+        customer = delivery.target_customer()
+        ref = delivery.order_id or delivery.global_order_id
+
         Notification.objects.create(
-            user=delivery.order.customer,
+            user=customer,
             channel=Notification.Channel.EMAIL,
             subject="Votre colis est en route",
             message=(
                 f"Bonjour,\n\n"
-                f"Votre commande n°{str(delivery.order.id)[:8]} est en cours de livraison.\n\n"
+                f"Votre commande n°{str(ref)[:8]} est en cours de livraison.\n\n"
                 "À la réception, le livreur vous communiquera un code de confirmation "
                 "à saisir sur la page « Confirmer la livraison » pour valider votre commande.\n\n"
                 "Merci de votre confiance."
             ),
-            metadata={"delivery_id": str(delivery.id), "order_id": str(delivery.order_id)},
+            metadata={"delivery_id": str(delivery.id), "order_id": str(ref)},
         ).send()
 
     @action(detail=True, methods=["post"], url_path="confirm")
@@ -661,7 +930,8 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
         remis par le livreur (le destinataire ou un admin)."""
         delivery = get_object_or_404(Delivery, pk=pk)
         user = request.user
-        is_allowed = delivery.order.customer_id == user.id or user.is_admin()
+        customer = delivery.target_customer()
+        is_allowed = (customer is not None and customer.id == user.id) or user.is_admin()
         if not is_allowed:
             raise PermissionDenied("Seul le destinataire de la commande peut confirmer la réception.")
         if delivery.status != Delivery.Status.PICKED_UP:
@@ -683,7 +953,8 @@ class DeliveryViewSet(viewsets.ReadOnlyModelViewSet):
         delivery.confirmation_otp_hash = ""
         delivery.confirmation_otp_expires_at = None
         delivery.save()
-        delivery.order.change_status(Order.Status.DELIVERED, changed_by=user)
+        for order in delivery.linked_orders():
+            order.change_status(Order.Status.DELIVERED, changed_by=user)
         delivery.broadcast_status("Livraison confirmée par le client. Bonne réception !")
         return Response(DeliverySerializer(delivery).data)
 
@@ -758,9 +1029,11 @@ class DeliveryEventStreamView(viewsets.ViewSet):
 
     def _delivery_for(self, user, delivery_id):
         delivery = get_object_or_404(Delivery, pk=delivery_id)
+        customer = delivery.target_customer()
+        store = delivery.main_store()
         is_allowed = (
-            delivery.order.customer_id == user.id
-            or delivery.order.store.owner_id == user.id
+            (customer is not None and customer.id == user.id)
+            or (store is not None and store.owner_id == user.id)
             or (delivery.driver_id and delivery.driver.user_id == user.id)
             or (delivery.partner_id and delivery.partner.user_id == user.id)
             or user.is_admin()
@@ -810,6 +1083,93 @@ class DeliveryEventStreamView(viewsets.ViewSet):
         response["Cache-Control"] = "no-cache"
         response["X-Accel-Buffering"] = "no"
         return response
+
+
+class GlobalOrderViewSet(viewsets.ReadOnlyModelViewSet):
+    """Commandes globales multi-boutiques (spec multi-boutiques).
+
+    - un client voit ses propres commandes globales ;
+    - un commerçant voit les commandes globales où SA boutique figure ;
+    - l'admin voit tout.
+
+    La commande globale porte un paiement unique (`Payment.global_order`) ;
+    ses sous-commandes ne sont visibles que par le vendeur concerné (isolation
+    entre vendeurs, spec §11).
+    """
+    serializer_class = GlobalOrderSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_admin():
+            return GlobalOrder.objects.all()
+        if user.has_role(Role.RoleName.MERCHANT):
+            return GlobalOrder.objects.filter(orders__store__owner=user).distinct()
+        return GlobalOrder.objects.filter(customer=user)
+
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, pk=None):
+        """Annule une commande globale encore annulable (client ou admin).
+
+        Toutes les sous-commandes annulables passent au statut CANCELLED, la
+        course de livraison (si elle n'a pas déjà commencé) est annulée, et un
+        remboursement est émis si le paiement global était déjà encaissé.
+        """
+        global_order = self.get_object()
+        user = request.user
+        if not (global_order.customer_id == user.id or user.is_admin()):
+            raise PermissionDenied("Vous ne pouvez annuler que vos propres commandes.")
+        if global_order.status == GlobalOrder.Status.CANCELLED:
+            raise ValidationError("Cette commande a déjà été annulée.")
+
+        delivery = global_order.deliveries.first()
+        if delivery and delivery.status in (
+            Delivery.Status.DELIVERED, Delivery.Status.DELIVERY_FAILED,
+            Delivery.Status.CUSTOMER_UNAVAILABLE, Delivery.Status.RETURNED,
+            Delivery.Status.CANCELLED,
+        ):
+            raise ValidationError(
+                f"La course est au statut « {delivery.status} » : annulation impossible."
+            )
+
+        with transaction.atomic():
+            for order in global_order.orders.all():
+                if order.can_be_cancelled():
+                    order.change_status(Order.Status.CANCELLED, changed_by=user)
+            if delivery and delivery.status in (
+                Delivery.Status.PENDING, Delivery.Status.ASSIGNED, Delivery.Status.ACCEPTED,
+            ):
+                delivery.cancel(user=user)
+            global_order.status = GlobalOrder.Status.CANCELLED
+            global_order.save(update_fields=["status"])
+
+        payment = global_order.payments.filter(status=Payment.Status.SUCCESS).first()
+        if payment:
+            Refund.objects.create(
+                payment=payment,
+                amount=payment.amount,
+                reason="Commande globale annulée",
+            )
+
+        return Response(GlobalOrderSerializer(global_order).data)
+
+
+class DeliveryPricingRuleViewSet(viewsets.ReadOnlyModelViewSet):
+    """Règles de tarification livraison (admin uniquement, spec §7-§8).
+
+    L'administration ajuste les montants (base, point de collecte
+    supplémentaire, km, express, min/max) — le moteur de calcul lit toujours
+    la règle active ; aucun montant n'est codé en dur. Un singleton actif est
+    créé par défaut au premier calcul.
+    """
+    queryset = DeliveryPricingRule.objects.all()
+    serializer_class = DeliveryPricingRuleSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.request.method in ("PATCH", "PUT", "POST", "DELETE"):
+            return [permissions.IsAdminUser()]
+        return [permissions.IsAuthenticated()]
 
 
 class PartnerViewSet(viewsets.ModelViewSet):

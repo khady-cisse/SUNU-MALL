@@ -21,10 +21,10 @@ export function DashboardShell({ nav, title }: { nav: DashboardNavItem[]; title:
 
   return (
     <div className="min-h-screen bg-muted">
-      <aside className="fixed inset-y-0 left-0 hidden w-64 flex-col navy-panel p-5 md:flex">
+      <aside className="fixed inset-y-0 left-0 hidden w-64 flex-col overflow-hidden navy-panel p-5 md:flex">
         <Logo to={nav[0]?.to ?? "/"} light className="mb-8" />
         <p className="mb-4 text-xs uppercase tracking-wide text-white/50">{title}</p>
-        <nav className="flex flex-1 flex-col gap-1">
+        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto">
           {nav.map((item) => (
             <NavLink
               key={item.to}
