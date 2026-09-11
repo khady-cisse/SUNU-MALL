@@ -45,6 +45,8 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # Sert les fichiers collectés (STATIC_ROOT) sans serveur statique séparé.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -305,6 +307,9 @@ STATIC_URL = "static/"
 # Statique maison (thème de l'admin Django, etc.) servie en plus de la
 # statique de Django et des applications en développement.
 STATICFILES_DIRS = [BASE_DIR / "static"]
+# Collecté à la construction de l'image (backend/Dockerfile) et servi par
+# WhiteNoise derrière gunicorn en production (nginx proxifie /static/).
+STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Email Configuration

@@ -1,0 +1,31 @@
+# Contextes de build unifiés entre Docker (backend context = ../backend) et git.
+# Tout ce qui n'est pas nécessaire à l'image finale.
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+venv/
+.venv/
+
+# Secrets / envs locaux — jamais dans l'image
+.env
+.env.*
+!*.py
+
+# Données locales, logs, médias
+*.sqlite3
+media/
+media_kyc/
+staticfiles/
+logs/
+celerybeat-schedule
+reports/
+backups/
+
+# Frontend (jamais embarqué dans l'image backend)
+node_modules/
+frontend/

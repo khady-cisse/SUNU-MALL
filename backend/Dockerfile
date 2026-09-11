@@ -43,6 +43,11 @@ ENV PYTHONUNBUFFERED=1
 
 COPY . .
 
+# Statique (admin Django + thème) collectée dès l'image : nginx/WhiteNoise
+# la servent sans étape runtime. configure settings/dev = DEBUG=True mais
+# collectstatic ne touche ni à la base ni aux secrets.
+RUN python manage.py collectstatic --noinput
+
 EXPOSE 8001
 
 # En dev, ce CMD est écrasé par docker-compose (reload activé).

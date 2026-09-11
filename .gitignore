@@ -6,6 +6,7 @@
 *.key
 infra/env/
 infra/volumes/
+infra/logs/
 docs/Mot de passe*.txt
 backend/celerybeat-schedule
 backend/config/settings/sqlite_test.py
@@ -30,6 +31,7 @@ build/
 *.tsbuildinfo
 npm-debug.log*
 yarn-error.log*
+frontend/vite.log
 
 # ===== Docker =====
 *.pid

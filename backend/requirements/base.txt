@@ -20,6 +20,8 @@ Pillow>=10.3,<10.4
 # Configuration & sécurité
 python-decouple>=3.8,<3.9
 gunicorn>=22.0,<22.1
+# Sert la statique collectée (admin Django, etc.) sans serveur séparé en prod.
+whitenoise>=6.6,<6.8
 
 # JWT Authentication
 djangorestframework-simplejwt>=5.3,<5.4

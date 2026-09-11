@@ -138,6 +138,32 @@ Des scripts automatisés sont à votre disposition dans le dossier `infra/script
 
 ---
 
+## 🚀 Déploiement en production
+
+Le déploiement est géré par `infra/scripts/deploy.sh` (stack `infra/docker-compose.prod.yml`).
+
+### Prérequis serveur (à faire une fois)
+1. Cloner le repo et se placer sur la branche à déployer.
+2. Renseigner les fichiers d'environnement :
+   ```bash
+   cp infra/env/{backend,postgres,redis,compose}.env.example infra/env/{backend,postgres,redis,compose}.env
+   ```
+   * `backend.env` : `DJANGO_SECRET_KEY` + `DJANGO_ALLOWED_HOSTS` (obligatoires, sinon le backend refuse de démarrer), `MINIO_PUBLIC_ENDPOINT` = domaine S3 public, clés Wave / Orange Money / Anthropic.
+   * `postgres.env` : mot de passe (ne PAS activer `trust`).
+   * `compose.env` : `PUBLIC_DOMAIN`, identifiants MinIO, mot de passe Grafana.
+3. Placer les certificats TLS dans `infra/nginx/ssl/` (`fullchain.pem` + `privkey.pem`) — **sans eux nginx ne démarre pas** (port 443).
+4. Ouvrir les ports **80** et **443** sur le firewall/hébergeur.
+
+### Lancer un déploiement
+```bash
+bash infra/scripts/deploy.sh
+```
+Le script tire le code, reconstruit les images, démarre sans coupure (`up -d --build`), applique les migrations et recollecte la statique.
+
+> La statique (admin Django) est embarquée dans l'image backend et servie par WhiteNoise via gunicorn — aucune étape statique séparée en prod.
+
+---
+
 ## 🤝 Workflow Git et Règles de Contribution
 
 Pour maintenir un code propre et éviter les conflits dans le mono-repo, toute l'équipe doit respecter le workflow suivant :
