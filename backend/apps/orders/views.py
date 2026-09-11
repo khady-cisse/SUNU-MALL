@@ -13,6 +13,8 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import AuthenticationFailed, NotFound, PermissionDenied, ValidationError
 from rest_framework.response import Response
+from rest_framework.views import APIView
+from django.core.exceptions import ValidationError as DjangoValidationError
 from .models import (
     Address, Delivery, DeliveryEvent, DeliveryPartner, DeliveryPickup,
     DeliveryPricingRule, DeliveryTracking, Driver, GlobalOrder, Order,
@@ -1152,6 +1154,46 @@ class GlobalOrderViewSet(viewsets.ReadOnlyModelViewSet):
             )
 
         return Response(GlobalOrderSerializer(global_order).data)
+
+
+class TrackOrderView(APIView):
+    """Suivi de commande sans connexion (invité).
+
+    POST /api/orders/track/
+      { "reference": "SM-20250101-000001" ou id de commande, "email": "..." }
+
+    Retourne la commande (ou commande globale) correspondant à la référence
+    et à l'adresse email du client. Aucune authentification requise, pour que
+    le client puisse suivre sa livraison depuis n'importe quel appareil
+    (spec §16 — achat sans compte).
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        reference = (request.data.get("reference") or "").strip()
+        email = (request.data.get("email") or "").strip().lower()
+        if not reference or not email:
+            raise ValidationError("Reference et email sont obligatoires.")
+        if not email or "@" not in email:
+            raise ValidationError("Adresse email invalide.")
+
+        gorder = GlobalOrder.objects.filter(
+            reference=reference, customer__email__iexact=email
+        ).first()
+        if gorder:
+            return Response(GlobalOrderSerializer(gorder).data)
+
+        # La référence peut aussi être l'UUID d'une commande simple (retrocompat).
+        try:
+            order = Order.objects.filter(
+                customer__email__iexact=email, pk=reference
+            ).first()
+        except DjangoValidationError:
+            order = None
+        if order:
+            return Response(OrderSerializer(order).data)
+
+        raise NotFound("Aucune commande ne correspond à cette référence et à cet email.")
 
 
 class DeliveryPricingRuleViewSet(viewsets.ReadOnlyModelViewSet):

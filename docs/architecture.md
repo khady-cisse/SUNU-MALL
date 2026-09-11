@@ -39,4 +39,4 @@ Chaque `Dockerfile` du repo suit le même principe : une étape de build (avec c
 
 ## Pourquoi les CI sont scindées par dossier (`paths:`)
 
-Chaque workflow GitHub Actions (`backend.yml`, `frontend.yml`, etc.) ne se déclenche que si son dossier a changé. Ça évite de relancer tout le pipeline Django quand seul le mobile a bougé — gain de temps et de lisibilité (chacun voit directement quelle CI le concerne sur sa PR).
+Chaque workflow GitHub Actions (`backend.yml`, `frontend.yml`, etc.) ne se déclenche que si son dossier a changé. Ça évite de relancer tout le pipeline Django quand seul le frontend a bougé — gain de temps et de lisibilité (chacun voit directement quelle CI le concerne sur sa PR).

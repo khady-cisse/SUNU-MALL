@@ -22,12 +22,11 @@ htmlcov/
 venv/
 .venv/
 
-# ===== Node / JS / TS (frontend, mobile) =====
+# ===== Node / JS / TS (frontend) =====
 node_modules/
 .next/
 dist/
 build/
-.expo/
 *.tsbuildinfo
 npm-debug.log*
 yarn-error.log*

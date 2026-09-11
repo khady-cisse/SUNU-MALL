@@ -1,6 +1,6 @@
 # SUNU MALL — Documentation Globale de l'Environnement
 
-Bienvenue sur le dépôt de **SUNU MALL**, une place de marché (marketplace) sénégalaise en ligne permettant à chaque vendeur de gérer sa propre boutique (produits, commandes, livreurs), accessible via des interfaces web et mobiles.
+Bienvenue sur le dépôt de **SUNU MALL**, une place de marché (marketplace) sénégalaise en ligne permettant à chaque vendeur de gérer sa propre boutique (produits, commandes, livreurs), accessible via une interface web responsive.
 
 Ce dépôt utilise une structure de **mono-repo** regroupant toutes les briques logicielles du projet.
 
@@ -14,8 +14,8 @@ Ce dépôt utilise une structure de **mono-repo** regroupant toutes les briques 
 | **Développeur Backend** | API REST (Django DRF), tâches asynchrones (Celery) |
 
 | **Développeuse Frontend** | Boutique publique (React/Vite) & Espaces vendeur / admin (React/Vite) |
-| **Développeuse Mobile & IA** | Application Client (React Native) & Intégration IA |
-| **Développeur Mobile, IA & DevOps** | App mobile, intégration IA et support infrastructure / CI-CD |
+| **Développeuse IA** | Intégration IA |
+| **Développeur IA & DevOps** | Intégration IA et support infrastructure / CI-CD |
 
 ---
 
@@ -24,8 +24,7 @@ Ce dépôt utilise une structure de **mono-repo** regroupant toutes les briques 
 ```
 sunu-mall/
 ├── backend/            # API REST - Django + Django REST Framework + Celery
-├── frontend/           # Boutique publique + espaces vendeur/admin/livreur - React + Vite (SPA)
-├── mobile/             # Application mobile Client - React Native (Expo)
+├── frontend/           # Boutique publique + espaces vendeur/admin/livreur - React + Vite (SPA responsive)
 ├── infra/              # Configuration Docker Compose, Nginx, Variables d'env & Monitoring
 │   ├── env/            # Variables d'environnement templates (dev, prod, staging)
 │   ├── nginx/          # Configuration du reverse proxy de routage

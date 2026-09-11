@@ -13,7 +13,6 @@ import { StarRating } from "@/components/ui/StarRating";
 import { QuantityStepper } from "@/components/marketplace/QuantityStepper";
 import { ProductRail } from "@/components/marketplace/ProductRail";
 import { useAuthStore } from "@/store/authStore";
-import { useGuestCheckoutStore } from "@/store/guestCheckoutStore";
 import { useRecentlyViewedStore } from "@/store/recentlyViewedStore";
 import { useCartStore } from "@/store/cartStore";
 import { useWishlistStore } from "@/store/wishlistStore";
@@ -24,7 +23,6 @@ export default function ProductDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
-  const openGuestCheckout = useGuestCheckoutStore((s) => s.open);
   const addRecentlyViewed = useRecentlyViewedStore((s) => s.addProduct);
   const addCartItem = useCartStore((s) => s.addItem);
   const isFav = useWishlistStore((s) => s.has(id ?? ""));
@@ -75,11 +73,15 @@ export default function ProductDetailPage() {
   const hasReviewed = !!user && !!reviews?.some((r) => r.user === user.id);
 
   async function addToCart() {
-    if (!variant) return;
+    if (!product || !variant) return;
     setAdding(true);
     setFeedback(null);
     try {
-      await addCartItem(variant.id, quantity);
+      await addCartItem(variant.id, quantity, {
+        product_name: product.name,
+        unit_price: variant.price,
+        store: product.store,
+      });
       setFeedback({ type: "success", text: "Ajouté au panier !" });
     } catch {
       setFeedback({ type: "error", text: "Impossible d'ajouter au panier." });
@@ -89,20 +91,15 @@ export default function ProductDetailPage() {
   }
 
   function handleAddToCart() {
-    if (!user) {
-      openGuestCheckout(addToCart);
-      return;
-    }
     addToCart();
   }
 
   async function handleAddToWishlist() {
-    if (!user) {
-      navigate(`/login?next=/product/${id}`);
-      return;
-    }
     try {
-      await toggleFavorite(product!.id);
+      await toggleFavorite(product!.id, {
+        product_name: product!.name,
+        product_price: variant?.price ?? product!.base_price,
+      });
       setFeedback({ type: "success", text: isFav ? "Retiré de la wishlist." : "Ajouté à la wishlist !" });
     } catch {
       setFeedback({ type: "error", text: "Impossible de mettre à jour la wishlist." });

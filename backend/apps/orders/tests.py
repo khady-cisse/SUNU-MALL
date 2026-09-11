@@ -18,7 +18,7 @@ from apps.catalog.models import Store
 from apps.orders.geoutils import compute_eta_seconds, point_in_polygon
 from apps.orders.models import (
     Address, Delivery, DeliveryEvent, DeliveryPartner, DeliveryTracking,
-    DeliveryZone, Driver, Order, PartnerInvoice, PartnerZonePricing,
+    DeliveryZone, Driver, GlobalOrder, Order, PartnerInvoice, PartnerZonePricing,
 )
 from apps.orders.pricing import best_delivery_partner, compute_delivery_fee
 
@@ -930,3 +930,94 @@ class PartnerSpaceApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 1)
         self.assertEqual(float(response.data[0]["client_fee"]), 1200.0)
+
+
+class TrackOrderGuestTests(TestCase):
+    """Endpoint /api/orders/track/ — suivi de commande invité (sans connexion)."""
+
+    def setUp(self):
+        self.client = APIClient()
+        Role.objects.get_or_create(name=Role.RoleName.MERCHANT)
+        Role.objects.get_or_create(name=Role.RoleName.CLIENT)
+        self.merchant = User.objects.create_user(
+            username="merchant-t@example.com", email="merchant-t@example.com",
+            password="testpass123", is_verified=True,
+        )
+        UserRole.objects.create(
+            user=self.merchant, role=Role.objects.get(name=Role.RoleName.MERCHANT)
+        )
+        self.store = Store.objects.create(owner=self.merchant, name="Boutique T")
+        self.customer = User.objects.create_user(
+            username="client-guest@example.com", email="client-guest@example.com",
+            password="testpass123", is_verified=True,
+        )
+        self.order = Order.objects.create(
+            customer=self.customer, store=self.store, total_amount=7500,
+            status=Order.Status.PENDING,
+        )
+
+    def _unicode_order(self, reference="SM-TRACK-000001"):
+        gorder = GlobalOrder.objects.create(
+            reference=reference, customer=self.customer, items_total=5000,
+            delivery_fee=1000, total_amount=6000, status=GlobalOrder.Status.PAID,
+        )
+        Order.objects.create(
+            customer=self.customer, store=self.store, global_order=gorder,
+            total_amount=5000, status=Order.Status.PAID,
+        )
+        return gorder
+
+    def test_track_global_order_by_reference_and_email(self):
+        """Sans authentification, retrouve une commande globale par référence+email."""
+        gorder = self._unicode_order()
+        response = self.client.post(
+            "/api/orders/track/",
+            {"reference": gorder.reference, "email": self.customer.email},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["reference"], gorder.reference)
+        self.assertEqual(response.data["status"], GlobalOrder.Status.PAID)
+        self.assertEqual(response.data["total_amount"], "6000.00")
+
+    def test_track_single_order_by_uuid_and_email(self):
+        """Une commande simple (UUID) est traçable sans connexion."""
+        response = self.client.post(
+            "/api/orders/track/",
+            {"reference": str(self.order.id), "email": self.customer.email},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["total_amount"], "7500.00")
+        self.assertEqual(response.data["store_name"], "Boutique T")
+
+    def test_track_wrong_email_gives_404(self):
+        gorder = self._unicode_order()
+        response = self.client.post(
+            "/api/orders/track/",
+            {"reference": gorder.reference, "email": "someone-else@example.com"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_track_missing_fields_gives_400(self):
+        response = self.client.post("/api/orders/track/", {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_track_requires_reference_match(self):
+        self._unicode_order(reference="SM-TRACK-000002")
+        response = self.client.post(
+            "/api/orders/track/",
+            {"reference": "SM-UNKNOWN-000999", "email": self.customer.email},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_track_ignores_invalid_uuid_reference(self):
+        """Une référence qui n'est pas un UUID ne crée pas d'erreur serveur."""
+        response = self.client.post(
+            "/api/orders/track/",
+            {"reference": "not-a-uuid", "email": self.customer.email},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

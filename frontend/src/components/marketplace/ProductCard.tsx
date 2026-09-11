@@ -1,18 +1,13 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { BadgeCheck, Heart, ImageOff, Loader2, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
-import { useAuthStore } from "@/store/authStore";
-import { useGuestCheckoutStore } from "@/store/guestCheckoutStore";
 import { useCartStore } from "@/store/cartStore";
 import { useWishlistStore } from "@/store/wishlistStore";
 import type { Product } from "@/types";
 import { formatPrice } from "@/lib/utils";
 
 export function ProductCard({ product, sponsored }: { product: Product; sponsored?: boolean }) {
-  const navigate = useNavigate();
-  const user = useAuthStore((s) => s.user);
-  const openGuestCheckout = useGuestCheckoutStore((s) => s.open);
   const addCartItem = useCartStore((s) => s.addItem);
   const isFav = useWishlistStore((s) => s.has(product.id));
   const toggleFavorite = useWishlistStore((s) => s.toggleItem);
@@ -30,7 +25,11 @@ export function ProductCard({ product, sponsored }: { product: Product; sponsore
     if (!defaultVariant) return;
     setAdding(true);
     try {
-      await addCartItem(defaultVariant.id, 1);
+      await addCartItem(defaultVariant.id, 1, {
+        product_name: product.name,
+        unit_price: defaultVariant.price,
+        store: product.store,
+      });
     } finally {
       setAdding(false);
     }
@@ -38,21 +37,16 @@ export function ProductCard({ product, sponsored }: { product: Product; sponsore
 
   function handleAddToCart(e: React.MouseEvent) {
     e.preventDefault();
-    if (!user) {
-      openGuestCheckout(addToCart);
-      return;
-    }
     addToCart();
   }
 
   async function handleToggleFavorite(e: React.MouseEvent) {
     e.preventDefault();
-    if (!user) {
-      navigate(`/login?next=/product/${product.id}`);
-      return;
-    }
     try {
-      await toggleFavorite(product.id);
+      await toggleFavorite(product.id, {
+        product_name: product.name,
+        product_price: String(minPrice),
+      });
     } catch {
       // Ignorer : le store gère l'état de façon réactive.
     }

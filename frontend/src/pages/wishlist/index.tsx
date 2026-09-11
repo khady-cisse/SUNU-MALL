@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Heart, ImageOff, LogIn, Trash2 } from "lucide-react";
+import { Heart, ImageOff, Trash2 } from "lucide-react";
 import { useAsync } from "@/hooks/useAsync";
 import * as shoppingApi from "@/api/shopping";
 import { Card } from "@/components/ui/Card";
@@ -11,9 +11,20 @@ import { useAuthStore } from "@/store/authStore";
 import { useWishlistStore } from "@/store/wishlistStore";
 import { formatPrice } from "@/lib/utils";
 
+interface WishRow {
+  id: string;
+  product: string;
+  product_name: string;
+  product_price: string;
+}
+
 export default function WishlistPage() {
   const user = useAuthStore((s) => s.user);
-  const { data: wishlist, loading, error, refetch } = useAsync(() => shoppingApi.getWishlist(), []);
+  const guestItems = useWishlistStore((s) => s.guestItems);
+  const { data: serverWishlist, loading, error, refetch } = useAsync(
+    () => (user ? shoppingApi.getWishlist() : Promise.resolve(null)),
+    [user?.id],
+  );
   const toggleItem = useWishlistStore((s) => s.toggleItem);
 
   async function remove(productId: string) {
@@ -21,22 +32,7 @@ export default function WishlistPage() {
     refetch();
   }
 
-  if (!user) {
-    return (
-      <div className="mx-auto max-w-7xl px-4 py-8">
-        <EmptyState
-          icon={LogIn}
-          title="Connectez-vous pour voir votre liste de souhaits"
-          description="Vos produits favoris vous attendent après connexion."
-          action={
-            <Link to="/login?next=/wishlist">
-              <Button>Se connecter</Button>
-            </Link>
-          }
-        />
-      </div>
-    );
-  }
+  const items: WishRow[] = user ? (serverWishlist?.items ?? []) : guestItems;
 
   if (loading)
     return (
@@ -52,7 +48,7 @@ export default function WishlistPage() {
       </h1>
       {error ? (
         <ErrorState fullPage onRetry={refetch} />
-      ) : wishlist?.items.length === 0 ? (
+      ) : items.length === 0 ? (
         <EmptyState
           icon={Heart}
           title="Votre wishlist est vide"
@@ -65,7 +61,7 @@ export default function WishlistPage() {
         />
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {wishlist?.items.map((item) => (
+          {items.map((item) => (
             <Card key={item.id} variant="interactive" className="flex items-center gap-3">
               <span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-muted">
                 <ImageOff className="h-5 w-5 text-muted-foreground" />

@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     AddressViewSet, DeliveryEventStreamView, DeliveryPricingRuleViewSet,
     DeliveryViewSet, DriverViewSet, GlobalOrderViewSet, OrderViewSet,
-    PartnerSpaceViewSet, PartnerViewSet,
+    PartnerSpaceViewSet, PartnerViewSet, TrackOrderView,
 )
 
 router = DefaultRouter()
@@ -16,6 +16,8 @@ router.register("delivery-pricing-rules", DeliveryPricingRuleViewSet, basename="
 router.register("", OrderViewSet, basename="order")
 
 urlpatterns = [
+    # Suivi de commande invité (sans connexion) — GET /api/orders/track/ (POST)
+    path("track/", TrackOrderView.as_view(), name="order-track"),
     *router.urls,
     # Flux temps réel (SSE) — GET /api/orders/deliveries/{id}/events/
     path(

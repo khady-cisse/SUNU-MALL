@@ -1,6 +1,7 @@
 import { Outlet, useLocation } from "react-router-dom";
 import { Check } from "lucide-react";
 import { RoleGuard } from "@/components/auth/RoleGuard";
+import { GuestCheckoutModal } from "@/components/auth/GuestCheckoutModal";
 import { MarketHeader } from "@/components/layout/MarketHeader";
 import { SupportChatWidget } from "@/components/support/SupportChatWidget";
 import { cn } from "@/lib/utils";
@@ -67,14 +68,14 @@ export function CheckoutLayout() {
         <Outlet />
       </main>
       <SupportChatWidget />
+      <GuestCheckoutModal />
     </div>
   );
 
-  // Le panier reste consultable sans compte (guest checkout) : un visiteur
-  // anonyme n'a jamais d'article dedans de toute façon (l'ajout au panier
-  // exige déjà un compte, créé silencieusement via GuestCheckoutModal), donc
-  // pas de mur de connexion utile ici — juste un panier vide accueillant.
-  // Les étapes suivantes (adresse, livraison, paiement…) restent protégées.
+  // Le panier reste consultable sans compte : un visiteur y ajoute librement
+  // des produits (panier local). Le compte invité n'est créé (silencieusement
+  // via GuestCheckoutModal) qu'au moment de « Passer commande ». Les étapes
+  // suivantes (adresse, livraison, paiement…) restent protégées.
   if (pathname === "/cart") return content;
 
   return <RoleGuard roles={["client"]}>{content}</RoleGuard>;

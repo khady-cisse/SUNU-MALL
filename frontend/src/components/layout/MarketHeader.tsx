@@ -39,10 +39,8 @@ export function MarketHeader() {
   const merchantKyc = useMerchantKycStore();
   const cartCount = useCartStore((s) => s.cartCount);
   const fetchCart = useCartStore((s) => s.fetchCart);
-  const resetCart = useCartStore((s) => s.reset);
   const favCount = useWishlistStore((s) => s.wishlistCount);
   const fetchWishlist = useWishlistStore((s) => s.fetchWishlist);
-  const resetWishlist = useWishlistStore((s) => s.reset);
   const [query, setQuery] = useState("");
   const [accountOpen, setAccountOpen] = useState(false);
 
@@ -59,11 +57,6 @@ export function MarketHeader() {
   }, [user?.id, isMerchant]);
 
   useEffect(() => {
-    if (!user) {
-      resetCart();
-      resetWishlist();
-      return;
-    }
     fetchCart();
     fetchWishlist();
     // eslint-disable-next-line react-hooks/exhaustive-deps

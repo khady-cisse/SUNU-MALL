@@ -57,6 +57,12 @@ export function cancelOrder(id: string) {
   return apiPost<Order>(`/orders/${id}/cancel/`);
 }
 
+/** Suivi de commande sans connexion (invité) — par référence ou id + email
+ * (POST /orders/track/, spec §16 « achat sans compte »). */
+export function trackOrder(reference: string, email: string) {
+  return apiPost<Order | GlobalOrder>("/orders/track/", { reference, email }, { auth: false });
+}
+
 /** Tarif de livraison côté serveur AVANT paiement, pour un panier
  * multi-boutiques (frais de collecte + distance réellement calculés et
  * affichés ; jamais calculés dans le navigateur). */

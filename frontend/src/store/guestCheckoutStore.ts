@@ -2,8 +2,8 @@ import { create } from "zustand";
 
 interface GuestCheckoutState {
   isOpen: boolean;
-  pendingAction: (() => void) | null;
-  open: (action: () => void) => void;
+  pendingAction: (() => void | Promise<void>) | null;
+  open: (action: () => void | Promise<void>) => void;
   close: () => void;
 }
 

@@ -313,13 +313,14 @@ class OrderSerializer(serializers.ModelSerializer):
 class GlobalOrderSerializer(serializers.ModelSerializer):
     orders = OrderSerializer(many=True, read_only=True)
     delivery = DeliverySerializer(read_only=True)
+    address_detail = AddressSerializer(source="address", read_only=True)
     sub_statuses = serializers.SerializerMethodField()
     payment = serializers.SerializerMethodField()
 
     class Meta:
         model = GlobalOrder
         fields = [
-            "id", "reference", "customer", "address", "delivery_type",
+            "id", "reference", "customer", "address", "address_detail", "delivery_type",
             "items_total", "delivery_fee", "total_amount", "status",
             "number_of_stores", "number_of_pickups",
             "orders", "delivery", "payment", "sub_statuses",

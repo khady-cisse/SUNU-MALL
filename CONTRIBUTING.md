@@ -22,12 +22,12 @@ Format recommandé (Conventional Commits) :
 type(zone): description courte au présent
 
 feat(backend): ajoute l'endpoint de recommandations IA
-fix(mobile): corrige le crash à l'ouverture du panier
+fix(frontend): corrige le crash à l'ouverture du panier
 chore(infra): met à jour l'image Postgres
 ```
 
 Types courants : `feat`, `fix`, `chore`, `docs`, `refactor`, `test`.
-Zones courantes : `backend`, `frontend`, `mobile`, `ia`, `infra`.
+Zones courantes : `backend`, `frontend`, `ia`, `infra`.
 
 ## Pull Requests
 
@@ -54,7 +54,7 @@ git push origin v1.0.0
 
 ## Dockerfile
 
-Chaque service garde son `Dockerfile` à jour. Règle simple : si tu ajoutes une dépendance à un service, vérifie que le `Dockerfile`/`requirements`/`package.json` correspondant la liste bien — l'objectif est qu'aucun service n'installe une dépendance dont il n'a pas besoin (ex: le mobile ne doit jamais tirer les libs IA du backend).
+Chaque service garde son `Dockerfile` à jour. Règle simple : si tu ajoutes une dépendance à un service, vérifie que le `Dockerfile`/`requirements`/`package.json` correspondant la liste bien — l'objectif est qu'aucun service n'installe une dépendance dont il n'a pas besoin (ex: le frontend ne doit jamais tirer les libs IA du backend).
 
 ## Conflits
 

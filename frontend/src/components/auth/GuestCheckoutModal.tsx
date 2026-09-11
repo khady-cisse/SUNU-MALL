@@ -43,7 +43,7 @@ export function GuestCheckoutModal() {
     try {
       const data = await authApi.guestCheckout(values);
       loginSuccess(data);
-      pendingAction?.();
+      await pendingAction?.();
       reset();
       close();
     } catch (err) {
