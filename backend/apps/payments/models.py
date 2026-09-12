@@ -76,7 +76,7 @@ class Payment(models.Model):
         ordering = ['-created_at']
         constraints = [
             models.CheckConstraint(
-                condition=(
+                check=(
                     models.Q(order__isnull=False, global_order__isnull=True, subscription__isnull=True)
                     | models.Q(order__isnull=True, global_order__isnull=False, subscription__isnull=True)
                     | models.Q(order__isnull=True, global_order__isnull=True, subscription__isnull=False)
